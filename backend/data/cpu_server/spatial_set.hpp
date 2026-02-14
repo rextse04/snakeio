@@ -8,14 +8,18 @@
 #include <algorithm>
 #include <ranges>
 #include <type_traits>
+#include <functional>
+#include <concepts>
 
 namespace snakeio::cpu {
-    template <typename ObjData, scalar_t CellLength, size_t ObjsSize>
+    template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d, auto GetPos = std::identity{}>
+    requires requires(Node node) {
+        { GetPos(node) } -> std::convertible_to<vector2d>;
+    }
     class spatial_set {
     public:
         using key_type = vector2d;
-        using value_type = std::conditional_t<std::is_same_v<ObjData, void>,
-            std::tuple<vector2d*>, std::tuple<vector2d*, ObjData>>;
+        using value_type = Node;
         using size_type = size_t;
         using difference_type = std::ptrdiff_t;
         using iterator = std::span<value_type>::iterator;
@@ -54,7 +58,7 @@ namespace snakeio::cpu {
                 return *current_;
             }
             constexpr basic_find_iterator& operator++() noexcept {
-                const size_type seg_id = current_ - base.objs_.data(),
+                const size_type seg_id = current_ - base.nodes_.data(),
                     cell_id_ = cell_id(row_current_, column_current_);
                 if (seg_id + 1 >= base.cell_begins_[cell_id_ + 1]) {
                     if (column_current_ + 1 >= column_end_) {
@@ -63,7 +67,7 @@ namespace snakeio::cpu {
                     } else {
                         ++column_current_;
                     }
-                    current_ = base.objs_.data() + cell_id(row_current_, column_current_);
+                    current_ = base.nodes_.data() + cell_id(row_current_, column_current_);
                 } else {
                     ++current_;
                 }
@@ -79,83 +83,80 @@ namespace snakeio::cpu {
         };
     private:
         std::array<size_type, cells + 1> cell_begins_;
-        std::array<value_type, ObjsSize> objs_;
+        std::array<value_type, ObjsSize> nodes_;
 
         constexpr auto&& size_(this auto&& self) noexcept {
             return self.cell_begins_[cells];
         }
+        constexpr auto span_(this auto&& self) noexcept {
+            return std::span{self.nodes_.data(), self.size_()};
+        }
     public:
         constexpr spatial_set() noexcept : cell_begins_() {}
-        template <typename R>
-        requires (
-            utils::container_compatible_range<R, value_type> ||
-            utils::container_compatible_range<R, snake&>)
-        constexpr spatial_set(R&& snakes) {
+        constexpr spatial_set(std::initializer_list<value_type> nodes) {
             size_() = 0;
-            insert(std::forward<R>(snakes));
+            insert(nodes);
             refresh();
         }
-        constexpr spatial_set(std::initializer_list<value_type> segments) {
+        template <utils::container_compatible_range<value_type> R>
+        constexpr spatial_set(R&& nodes) {
             size_() = 0;
-            insert(segments);
+            insert(std::forward<R>(nodes));
             refresh();
         }
         constexpr auto begin(this auto&& self) noexcept {
-            return std::span{self.objs_, self.size_}.begin();
+            return self.span_().begin();
         }
         constexpr auto end(this auto&& self) noexcept {
-            return std::span{self.objs_, self.size_}.end();
+            return self.span_().end();
         }
         constexpr auto rbegin(this auto&& self) noexcept {
-            return std::span{self.objs_, self.size_}.rbegin();
+            return self.span_().rbegin();
         }
         constexpr auto rend(this auto&& self) noexcept {
-            return std::span{self.objs_, self.size_}.rend();
+            return self.span_().rend();
         }
         constexpr bool empty() const noexcept { return size() == 0; }
         constexpr size_type size() const noexcept { return size_(); }
         static constexpr size_type max_size() noexcept { return std::numeric_limits<size_type>::max(); }
         constexpr void clear() noexcept { size_() = 0; }
-        constexpr void insert(const value_type& segment) noexcept {
-            objs_[size_()++] = segment;
+        constexpr void insert(const value_type& node) noexcept {
+            nodes_[size_()++] = node;
         }
-        constexpr void insert(snake& s) noexcept {
-            for (unsigned i = 0; i < s.length; ++i) {
-                objs_[size_()++] = {&s, &s.segments[i]};
+        template <utils::container_compatible_range<value_type> R>
+        constexpr void insert(R&& nodes) noexcept {
+            if constexpr (std::ranges::sized_range<R>) {
+                size_() += std::ranges::size(nodes);
+                std::ranges::copy(nodes, nodes_.begin() + size_());
+            } else {
+                for (const value_type& seg : nodes) insert(seg);
             }
         }
-        constexpr void insert(utils::container_compatible_range<value_type> auto&& segments) noexcept {
-            for (const value_type& seg : segments) insert(seg);
+        constexpr void insert(std::initializer_list<value_type> nodes) noexcept {
+            return insert<std::initializer_list<value_type>>(nodes);
         }
-        constexpr void insert(std::initializer_list<value_type> segments) noexcept {
-            for (const value_type& seg : segments) insert(seg);
-        }
-        constexpr void insert(utils::container_compatible_range<snake&> auto&& snakes) noexcept {
-            for (snake& s : snakes) insert(s);
-        }
-        template <typename T>
-        requires (std::is_same_v<std::remove_cvref_t<T>, ObjData>)
-        constexpr void emplace(vector2d* pos, T&& obj_data) noexcept {
-            objs_[size_()++] = {pos, std::forward<T>(obj_data)};
+        template <typename... Args>
+        requires (std::is_constructible_v<value_type, Args&&...>)
+        constexpr void emplace(Args&&... args) noexcept {
+            new(nodes_.data() + size_()++) value_type(std::forward<Args>(args)...);
         }
         // invalidates all iterators
-        //
         constexpr void refresh() noexcept {
-            std::array<size_type, std::tuple_size_v<decltype(objs_)>> cell_ids_;
+            std::array<size_type, std::tuple_size_v<decltype(nodes_)>> cell_ids_;
             std::span cell_ids(cell_ids_.data(), size_());
             for (std::size_t i = 0; i < size_(); ++i) {
-                const vector2d& pos = *std::get<0>(objs_[i]);
+                auto pos = static_cast<vector2d>(GetPos(nodes_[i]));
                 cell_ids[i] = cell_id(pos[1] / cell_length, pos[0] / cell_length);
             }
-            std::ranges::sort(objs_, {}, [&](value_type& t) { return cell_ids[&t - objs_.data()]; });
+            std::ranges::sort(nodes_, {}, [&](value_type& t) { return cell_ids[&t - nodes_.data()]; });
             for (size_type cell_id = 1; cell_id < cells ; ++cell_id) {
                 cell_begins_[cell_id] =
                     std::ranges::upper_bound(cell_ids.begin() + cell_begins_[cell_id - 1], cell_ids.end(), cell_id) -
                     cell_ids.begin();
             }
         }
-        // Erroneous output if any element is inserted or if the pointed-to segment is moved
-        // after the last call to refresh().
+        // Erroneous output if any node is inserted or if GetPos(node) is changed for any existing node
+        // after the last call to refresh.
         // UB if key is outside of game window.
         constexpr auto find(this auto&& self, const key_type& key, scalar_t radius = 0) noexcept {
             const size_type cell_radius =
@@ -167,10 +168,10 @@ namespace snakeio::cpu {
             return std::ranges::subrange(basic_find_iterator(self,
                 row_begin, std::min<size_type>(rows, center_row + cell_radius + 1), row_begin,
                 column_begin, std::min<size_type>(columns, center_column + cell_radius + 1), column_begin,
-                self.objs_.data() + cell_id(row_begin, column_begin)
+                self.nodes_.data() + cell_id(row_begin, column_begin)
             ), std::default_sentinel)
-            | std::views::filter([key, radius](const value_type& t) {;
-                const vector2d d = *std::get<0>(t) - key;
+            | std::views::filter([key, radius](const value_type& t) {
+                auto d = static_cast<vector2d>(GetPos(t)) - key;
                 return d[0] * d[0] + d[1] * d[1] < radius * radius;
             });
         }

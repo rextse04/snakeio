@@ -4,6 +4,7 @@
 namespace snakeio {
     struct food {
         vector2d pos;
-        score_t size;
+        scalar_t width;
+        score_t score;
     };
 }

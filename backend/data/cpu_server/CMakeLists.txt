@@ -1,4 +1,2 @@
-add_library(cpu_server_lib STATIC
-        game.cpp
-        impl.cpp)
+add_library(cpu_server_lib STATIC game.cpp)
 target_link_libraries(cpu_server_lib PRIVATE cpu_network_lib)

@@ -26,6 +26,9 @@ namespace snakeio {
         constexpr id_t avail_size() const noexcept {
             return free_list_size_;
         }
+        constexpr bool operator[](id_t id) const noexcept {
+            return (id < IDBound) && active_[id];
+        }
         constexpr std::optional<id_t> allocate() noexcept {
             if (free_list_begin_ == free_list_end_) {
                 return std::nullopt;
