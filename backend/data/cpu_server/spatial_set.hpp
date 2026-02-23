@@ -3,13 +3,13 @@
 #include <cpp_utils/ranges.hpp>
 #include <cpp_utils/type.hpp>
 #include <array>
-#include <tuple>
 #include <span>
 #include <algorithm>
 #include <ranges>
 #include <type_traits>
 #include <functional>
 #include <concepts>
+#include <limits>
 
 namespace snakeio::cpu {
     template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d, auto GetPos = std::identity{}>
@@ -34,8 +34,18 @@ namespace snakeio::cpu {
             rows = game_max_height / cell_length + 1,
             columns = game_max_width / cell_length + 1,
             cells = rows * columns;
+        static constexpr key_type erase_key = {columns * cell_length, rows * cell_length};
         static constexpr size_type cell_id(size_type row_id, size_type column_id) noexcept {
             return row_id * columns + column_id;
+        }
+        static constexpr size_type row_id(const key_type& key) noexcept {
+            return key[1] / cell_length;
+        }
+        static constexpr size_type column_id(const key_type& key) noexcept {
+            return key[0] / cell_length;
+        }
+        static constexpr size_type cell_id(const key_type& key) noexcept {
+            return cell_id(row_id(key), column_id(key));
         }
 
         template <typename SpatialSet>
@@ -43,34 +53,25 @@ namespace snakeio::cpu {
         private:
             SpatialSet& base;
             const size_type row_begin_, row_end_, column_begin_, column_end_;
-            size_type row_current_, column_current_;
             utils::follow_t<SpatialSet, value_type*> current_;
         public:
             constexpr basic_find_iterator(SpatialSet& base,
-                size_type row_begin, size_type row_end, size_type row_current,
-                size_type column_begin, size_type column_end, size_type column_current,
+                size_type row_begin, size_type row_end, size_type column_begin, size_type column_end,
                 decltype(current_) current) noexcept :
                 base(base),
-                row_begin_(row_begin), row_end_(row_end), row_current_(row_current),
-                column_begin_(column_begin), column_end_(column_end), column_current_(column_current),
+                row_begin_(row_begin), row_end_(row_end), column_begin_(column_begin), column_end_(column_end),
                 current_(current) {}
             constexpr auto& operator*() noexcept {
                 return *current_;
             }
             constexpr basic_find_iterator& operator++() noexcept {
-                const size_type seg_id = current_ - base.nodes_.data(),
-                    cell_id_ = cell_id(row_current_, column_current_);
-                if (seg_id + 1 >= base.cell_begins_[cell_id_ + 1]) {
-                    if (column_current_ + 1 >= column_end_) {
-                        ++row_current_;
-                        column_current_ = column_begin_;
-                    } else {
-                        ++column_current_;
-                    }
-                    current_ = base.nodes_.data() + cell_id(row_current_, column_current_);
-                } else {
-                    ++current_;
+                const key_type& pos = GetPos(*++current_);
+                if (column_id(pos) >= column_end_) {
+                    const size_type next_cell = cell_id(row_id(pos) + 1, column_begin_);
+                    current_ = std::ranges::lower_bound(current_, base.nodes_.data() + base.size_, next_cell, {},
+                        static_cast<void (*)(const value_type&)>(cell_id));
                 }
+                return *this;
             }
             constexpr basic_find_iterator operator++(int) noexcept {
                 basic_find_iterator temp = *this;
@@ -78,29 +79,24 @@ namespace snakeio::cpu {
                 return temp;
             }
             constexpr bool operator==(std::default_sentinel_t) const noexcept {
-                return row_current_ < row_end_ && column_current_ < column_end_;
+                return row_id(GetPos(*current_)) >= row_end_;
             }
         };
     private:
-        std::array<size_type, cells + 1> cell_begins_;
+        size_type size_ = 0;
         std::array<value_type, ObjsSize> nodes_;
 
-        constexpr auto&& size_(this auto&& self) noexcept {
-            return self.cell_begins_[cells];
-        }
         constexpr auto span_(this auto&& self) noexcept {
-            return std::span{self.nodes_.data(), self.size_()};
+            return std::span{self.nodes_.data(), self.size_};
         }
     public:
-        constexpr spatial_set() noexcept : cell_begins_() {}
+        constexpr spatial_set() noexcept = default;
         constexpr spatial_set(std::initializer_list<value_type> nodes) {
-            size_() = 0;
             insert(nodes);
             refresh();
         }
         template <utils::container_compatible_range<value_type> R>
         constexpr spatial_set(R&& nodes) {
-            size_() = 0;
             insert(std::forward<R>(nodes));
             refresh();
         }
@@ -117,17 +113,20 @@ namespace snakeio::cpu {
             return self.span_().rend();
         }
         constexpr bool empty() const noexcept { return size() == 0; }
-        constexpr size_type size() const noexcept { return size_(); }
+        constexpr size_type size() const noexcept { return size_; }
         static constexpr size_type max_size() noexcept { return std::numeric_limits<size_type>::max(); }
-        constexpr void clear() noexcept { size_() = 0; }
+        constexpr void clear() noexcept { size_ = 0; }
+        // Erases n elements at the back.
+        // Common use case: set n deleted nodes to erase_key, refresh(), then erase(n).
+        constexpr void erase(size_type n) noexcept { size_ -= n; }
         constexpr void insert(const value_type& node) noexcept {
-            nodes_[size_()++] = node;
+            nodes_[size_++] = node;
         }
         template <utils::container_compatible_range<value_type> R>
         constexpr void insert(R&& nodes) noexcept {
             if constexpr (std::ranges::sized_range<R>) {
-                size_() += std::ranges::size(nodes);
-                std::ranges::copy(nodes, nodes_.begin() + size_());
+                size_ += std::ranges::size(nodes);
+                std::ranges::copy(nodes, nodes_.begin() + size_);
             } else {
                 for (const value_type& seg : nodes) insert(seg);
             }
@@ -138,36 +137,28 @@ namespace snakeio::cpu {
         template <typename... Args>
         requires (std::is_constructible_v<value_type, Args&&...>)
         constexpr void emplace(Args&&... args) noexcept {
-            new(nodes_.data() + size_()++) value_type(std::forward<Args>(args)...);
+            new(nodes_.data() + size_++) value_type(std::forward<Args>(args)...);
         }
         // invalidates all iterators
         constexpr void refresh() noexcept {
-            std::array<size_type, std::tuple_size_v<decltype(nodes_)>> cell_ids_;
-            std::span cell_ids(cell_ids_.data(), size_());
-            for (std::size_t i = 0; i < size_(); ++i) {
-                auto pos = static_cast<vector2d>(GetPos(nodes_[i]));
-                cell_ids[i] = cell_id(pos[1] / cell_length, pos[0] / cell_length);
-            }
-            std::ranges::sort(nodes_, {}, [&](value_type& t) { return cell_ids[&t - nodes_.data()]; });
-            for (size_type cell_id = 1; cell_id < cells ; ++cell_id) {
-                cell_begins_[cell_id] =
-                    std::ranges::upper_bound(cell_ids.begin() + cell_begins_[cell_id - 1], cell_ids.end(), cell_id) -
-                    cell_ids.begin();
-            }
+            std::ranges::sort(nodes_.begin(), nodes_.begin() + size_, {}, [](const value_type& node) {
+                return cell_id(GetPos(node));
+            });
         }
         // Erroneous output if any node is inserted or if GetPos(node) is changed for any existing node
         // after the last call to refresh.
-        // UB if key is outside of game window.
-        constexpr auto find(this auto&& self, const key_type& key, scalar_t radius = 0) noexcept {
+        // UB if key is outside game window.
+        template <typename Self>
+        constexpr auto find(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
             const size_type cell_radius =
                 static_cast<size_type>(radius / cell_length) + (std::fmod(radius, cell_length) > 0);
-            const size_type center_row = key[1] / cell_length;
-            const size_type center_column = key[0] / cell_length;
+            const size_type center_row = row_id(key);
+            const size_type center_column = column_id(key);
             const size_type row_begin = std::max<size_type>(0, center_row - cell_radius);
             const size_type column_begin = std::max<size_type>(0, center_column - cell_radius);
-            return std::ranges::subrange(basic_find_iterator(self,
-                row_begin, std::min<size_type>(rows, center_row + cell_radius + 1), row_begin,
-                column_begin, std::min<size_type>(columns, center_column + cell_radius + 1), column_begin,
+            return std::ranges::subrange(basic_find_iterator<Self&&>(self,
+                row_begin, std::min<size_type>(rows, center_row + cell_radius + 1),
+                column_begin, std::min<size_type>(columns, center_column + cell_radius + 1),
                 self.nodes_.data() + cell_id(row_begin, column_begin)
             ), std::default_sentinel)
             | std::views::filter([key, radius](const value_type& t) {

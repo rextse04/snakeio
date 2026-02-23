@@ -4,7 +4,6 @@ project(snakeio)
 set(CMAKE_CXX_STANDARD 26)
 
 include_directories(.)
-add_subdirectory(cpu_network)
 
 file(GLOB SERVER_DIRS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "${CMAKE_CURRENT_SOURCE_DIR}/*_server")
 foreach(dir ${SERVER_DIRS})

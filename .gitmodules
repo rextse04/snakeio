@@ -4,6 +4,3 @@
 [submodule "backend/cpp_utils"]
 	path = backend/data/cpp_utils
 	url = https://github.com/rextse04/cpp_utils.git
-[submodule "backend/data/cryptopp"]
-	path = backend/data/cryptopp
-	url = https://github.com/weidai11/cryptopp.git

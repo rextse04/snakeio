@@ -3,33 +3,30 @@
 #include <print>
 #include <syncstream>
 
-namespace snakeio {
-    struct logger {
+namespace snakeio::logger {
+    class logger {
+    private:
+        std::ostream& os_;
+        const char* prefix_;
+    public:
+        constexpr logger(std::ostream& os, const char* prefix) noexcept :
+            os_(os), prefix_(prefix) {}
         template <typename... Args>
-        static void debug(std::format_string<Args...> fmt, Args&&... args) {
-#ifndef NDEBUG
-            std::osyncstream oss(std::cout);
-            std::print(oss, "[DEBUG] ");
-            std::println(oss, fmt, std::forward<Args>(args)...);
-#endif
-        }
-        template <typename... Args>
-        static void info(std::format_string<Args...> fmt, Args&&... args) {
-            std::osyncstream oss(std::cout);
-            std::print(oss, "\033[34m[INFO]\033[0m ");
-            std::println(oss, fmt, std::forward<Args>(args)...);
-        }
-        template <typename... Args>
-        static void warn(std::format_string<Args...> fmt, Args&&... args) {
-            std::osyncstream oss(std::cout);
-            std::print(oss, "\033[33m[WARN]\033[0m ");
-            std::println(oss, fmt, std::forward<Args>(args)...);
-        }
-        template <typename... Args>
-        static void error(std::format_string<Args...> fmt, Args&&... args) {
-            std::osyncstream oss(std::cout);
-            std::print(oss, "\033[31m[ERROR]\033[0m ");
+        void operator()(std::format_string<Args...> fmt, Args&&... args) const {
+            std::osyncstream oss(os_);
+            os_ << prefix_;
             std::println(oss, fmt, std::forward<Args>(args)...);
         }
     };
+
+    inline constexpr logger
+        debug{std::cout, "[DEBUG] "},
+        info{std::cout, "\033[34m[INFO]\033[0m "},
+        warn{std::cout, "\033[33m[WARN]\033[0m; "},
+        error{std::cout, "\033[31m[ERROR]\033[0m "};
+
+    void print_packet(const logger& logger, std::span<const std::byte> packet) {
+        logger("{} bytes received: {::0>8b}.",
+            packet.size(), std::span(reinterpret_cast<const unsigned char*>(packet.data()), packet.size()));
+    }
 }

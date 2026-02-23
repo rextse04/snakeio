@@ -2,18 +2,18 @@
 #include "config.hpp"
 #include "vector.hpp"
 #include <array>
+#include <algorithm>
 
 namespace snakeio {
-    struct snake {
+    struct snake_basic {
         scalar_t speed, angle;
         scalar_t width;
         size_t length;
-        std::array<vector2d, snake_max_length> segments;
         score_t score;
         bool alive, human;
     };
-
-    struct snake_delta {
-        scalar_t angle;
+    struct snake {
+        snake_basic basic;
+        std::array<vector2d, snake_max_length + 1> segments;
     };
 }
