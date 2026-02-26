@@ -28,6 +28,9 @@ std::expected<id_t, game::add_session_error> game::add_session(
     }
     impl::session& session = impl_.sessions[*session_id];
     session.players = human_players + ai_players;
+    if (session.players > game_max_players) [[unlikely]] {
+        return std::unexpected(too_many_players);
+    }
     session.tick = 0;
     session.max_tick = game_max_tick;
     session.width = game_width_psqp * std::sqrt(session.players);
@@ -194,11 +197,11 @@ snakeio::size_t game::impl::store_delta(std::byte* const out, const session& ses
     return size;
 }
 
-snakeio::size_t game::impl::store_snapshot(std::byte* const out, const session& session) noexcept {
+snakeio::size_t game::impl::store_snapshot(std::byte* const out, tick_t tick, const session& session) noexcept {
     std::byte* it = out;
     store_float32(std::span<std::byte, 4>(it, 4), session.width);
     store_float32(std::span<std::byte, 4>(it + 4, 4), session.height);
-    store_32(std::span<std::byte, 4>(it + 8, 4), session.players);
+    store_32(std::span<std::byte, 4>(it + 8, 4), tick);
     it += 12;
     for (const snake& snake : session.snakes_view()) {
         it = store_snake(it, snake);
@@ -244,7 +247,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             size_t snapshot_text_size;
             if (session.tick == 0) [[unlikely]] {
                 if (std::ranges::all_of(in_packets, [tick](const in_packet& packet) { return packet.tick == tick; })) {
-                    snapshot_text_size = store_snapshot(snapshot_text, session);
+                    snapshot_text_size = store_snapshot(snapshot_text, tick, session);
                 } else {
                     std::byte lobby_status_text[lobby_status_max_text_size];
                     const size_t lobby_status_text_size =
@@ -342,7 +345,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 // Write to buffer
                 delta_text_size = store_delta(delta_text, session, delta);
                 if (snapshot_requested) {
-                    snapshot_text_size = store_snapshot(snapshot_text, session);
+                    snapshot_text_size = store_snapshot(snapshot_text, tick, session);
                 }
             }
             // Send packets

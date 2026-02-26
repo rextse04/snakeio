@@ -24,7 +24,7 @@ namespace snakeio {
         // Allocate memory_ and initializes the impl in it.
         game();
         enum class add_session_error {
-            no_memory,
+            no_memory = 1,
             too_many_players,
             unknown_error
         };

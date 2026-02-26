@@ -35,7 +35,7 @@ game game_;
 }
 
 static void control_port(std::stop_source stop_source, int sock) {
-    std::byte buffer[128];
+    std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
     sockaddr_storage client_addr{};
     while (true) {
         socklen_t client_addr_len = sizeof(client_addr);
@@ -75,24 +75,29 @@ static void control_port(std::stop_source stop_source, int sock) {
                 if (id.has_value()) {
                     logger::debug("Session token {} mapped to session ID {}.", token, id.value());
                     std::memcpy(buffer + 6, &id.value(), sizeof(id_t));
-                    sendto(sock, buffer, 6 + sizeof(id_t), 0,
-                        reinterpret_cast<const sockaddr*>(&client_addr), client_addr_len);
                 } else {
                     std::string_view error;
                     switch (id.error()) {
                         using enum game::add_session_error;
-                        case no_memory:
+                        case no_memory: {
                             error = "no memory";
                             break;
-                        case too_many_players:
+                        }
+                        case too_many_players: {
                             error = "too many players";
                             break;
-                        default:
+                        }
+                        case unknown_error: {
                             error = "unknown error";
                             break;
+                        }
+                        default: std::unreachable();
                     }
                     logger::warn("Failed to create new session: {}.", error);
+                    buffer[6] = static_cast<std::byte>(id.error());
                 }
+                sendto(sock, buffer, 6 + sizeof(id_t), 0,
+                    reinterpret_cast<const sockaddr*>(&client_addr), client_addr_len);
                 break;
             }
             default: {

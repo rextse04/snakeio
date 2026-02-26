@@ -13,7 +13,7 @@ namespace snakeio {
     using tag_view = std::span<std::byte, 16>;
     using const_tag_view = std::span<const std::byte, 16>;
 
-    // See packet_format.md.
+    // See protocol.md.
     class data_packet : std::span<std::byte> {
     public:
         static constexpr size_t header_size = 32;
