@@ -3,6 +3,7 @@
 #include "vector.hpp"
 #include <array>
 #include <algorithm>
+#include <span>
 
 namespace snakeio {
     struct snake_basic {
@@ -15,5 +16,9 @@ namespace snakeio {
     struct snake {
         snake_basic basic;
         std::array<vector2d, snake_max_length + 1> segments;
+
+        constexpr auto segments_view(this auto&& self) noexcept {
+            return std::span(self.segments.begin(), self.basic.length);
+        }
     };
 }

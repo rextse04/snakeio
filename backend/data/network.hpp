@@ -15,15 +15,15 @@
 #endif
 
 template <>
-struct std::formatter<sockaddr, char> {
+struct std::formatter<sockaddr_storage, char> {
     template <typename ParseContext>
     constexpr ParseContext::iterator parse(ParseContext& ctx) {
         return ctx.begin();
     }
     template <typename FmtContext>
-    constexpr FmtContext::iterator format(const sockaddr& addr, FmtContext& ctx) const {
+    constexpr FmtContext::iterator format(const sockaddr_storage& addr, FmtContext& ctx) const {
         char host[NI_MAXHOST], service[NI_MAXSERV];
-        if (getnameinfo(&addr, sizeof(addr),
+        if (getnameinfo(reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_storage),
             host, sizeof(host),
             service, sizeof(service),
             NI_NUMERICHOST | NI_NUMERICSERV) == 0) {

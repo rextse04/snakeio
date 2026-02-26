@@ -15,21 +15,22 @@ using namespace snakeio;
 game game_;
 
 [[nodiscard]] static int open_port(std::string_view name, const sockaddr_in6& addr) {
-    const int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (sock < 0) {
         logger::error("Failed to create {} socket.", name);
         return sock;
     }
     constexpr int off = 0;
-    if (setsockopt(sock, IPPROTO_IP, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
+    if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
         logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
     }
     if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
         logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
-        close(sock);
         return -1;
     }
-    logger::info("{} port listening on {}.", name, *reinterpret_cast<const sockaddr*>(&addr));
+    sockaddr_storage addr_storage{};
+    std::memcpy(&addr_storage, &addr, sizeof(addr));
+    logger::info("{} port listening on {}.", name, addr_storage);
     return sock;
 }
 
@@ -42,8 +43,7 @@ static void control_port(std::stop_source stop_source, int sock) {
             reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
         if (recv_len < 1) [[unlikely]] {
             if (recv_len == 0) [[unlikely]] {
-                logger::warn("Received empty packet on control port from {}.",
-                    *reinterpret_cast<sockaddr*>(&client_addr));
+                logger::warn("Received empty packet on control port from {}.", client_addr);
             } else if (errno != EINTR) {
                 logger::warn("recvfrom failed on control port: {}.", std::strerror(errno));
             }
@@ -52,17 +52,17 @@ static void control_port(std::stop_source stop_source, int sock) {
         switch (static_cast<unsigned char>(buffer[0])) {
             case 0: { // kill
                 std::ignore = stop_source.request_stop();
-                close(sock);
                 return;
             }
             case 1: { // new session token
-                // format: <1><human_players: 1><ai_players: 1><keys: human_players * 4>
-                constexpr std::size_t header_size = 3;
+                // format: <1><session_token: 5><human_players: 1><ai_players: 1><keys: human_players * 32>
+                constexpr std::size_t header_size = 1 + 5 + 1 + 1;
                 if (recv_len < header_size) {
                     goto invalid_format;
                 }
-                const auto human_players = static_cast<unsigned char>(buffer[1]),
-                    ai_players = static_cast<unsigned char>(buffer[2]);
+                const std::string_view token(reinterpret_cast<char*>(buffer + 1), 5);
+                const auto human_players = static_cast<unsigned char>(buffer[6]),
+                    ai_players = static_cast<unsigned char>(buffer[7]);
                 if (recv_len < header_size + human_players * sizeof(snakeio::key_t)) {
                     goto invalid_format;
                 }
@@ -71,18 +71,15 @@ static void control_port(std::stop_source stop_source, int sock) {
                 // 2. storage is given by an array of unsigned char
                 // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
                 const auto keys = reinterpret_cast<const snakeio::key_t*>(buffer + header_size);
-                session_snapshot snapshot;
-                game_.generate_session(snapshot, human_players, ai_players, {keys, human_players});
-                const auto result = game_.add_session(snapshot);
-                if (result.has_value()) {
-                    logger::debug("New session ID {}.", result.value());
-                    snapshot.id = result.value();
-                    // TODO: send session info back
-                    sendto(sock, &result.value(), sizeof(id_t), 0,
+                const auto id = game_.add_session(human_players, ai_players, std::span(keys, human_players));
+                if (id.has_value()) {
+                    logger::debug("Session token {} mapped to session ID {}.", token, id.value());
+                    std::memcpy(buffer + 6, &id.value(), sizeof(id_t));
+                    sendto(sock, buffer, 6 + sizeof(id_t), 0,
                         reinterpret_cast<const sockaddr*>(&client_addr), client_addr_len);
                 } else {
                     std::string_view error;
-                    switch (result.error()) {
+                    switch (id.error()) {
                         using enum game::add_session_error;
                         case no_memory:
                             error = "no memory";
@@ -133,5 +130,4 @@ int main() {
     std::stop_source stop_source;
     std::jthread control_thread(control_port, stop_source, control_sock),
         data_thread(data_port, stop_source.get_token(), data_sock);
-    close(control_sock); close(data_sock);
 }

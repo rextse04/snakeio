@@ -2,23 +2,6 @@
 #include <packet.hpp>
 #include <utils.hpp>
 #include <cstddef>
-#include <tuple>
-
-snakeio::data_packet::load_result snakeio::data_packet::load() noexcept {
-    using enum load_result;
-    if (size < prefix_size) [[unlikely]] {
-        return too_short;
-    }
-    if (text_size() % data_packet_align) [[unlikely]] {
-        return invalid_text_size;
-    }
-    auto it = buffer.begin();
-    session_id = load_32(std::span<const std::byte, 4>(it, 4));
-    player_id = load_32(std::span<const std::byte, 4>(it += 4, 4));
-    std::ranges::copy_n(it += 4 + 8 + text_size(), nonce.size(), nonce.begin());
-    std::ranges::copy_n(it + nonce.size(), tag.size(), tag.begin());
-    return ok;
-}
 
 static void quarter_round(std::uint32_t& a, std::uint32_t& b, std::uint32_t& c, std::uint32_t& d) noexcept {
     a += b; d ^= a; d = (d << 16) | (d >> 16);
@@ -28,7 +11,7 @@ static void quarter_round(std::uint32_t& a, std::uint32_t& b, std::uint32_t& c, 
 }
 
 static std::array<std::uint32_t, 16> chacha20_block(
-    const snakeio::key_t& key, std::uint32_t counter, const snakeio::nonce_t& nonce) noexcept {
+    const snakeio::key_t& key, std::uint32_t counter, snakeio::const_nonce_view nonce) noexcept {
     // The state is initialized as follows:
     std::array<std::uint32_t, 16> out;
     out[0] = 0x61707865;
@@ -39,7 +22,7 @@ static std::array<std::uint32_t, 16> chacha20_block(
         out[4 + i] = snakeio::load_32(std::span<const std::byte, 4>{key.begin() + i*4, 4});
     }
     out[12] = counter;
-    for (int i = 0; i < std::tuple_size_v<snakeio::nonce_t> / 4; ++i) {
+    for (int i = 0; i < snakeio::nonce_view::extent / 4; ++i) {
         out[13 + i] = snakeio::load_32(std::span<const std::byte, 4>{nonce.begin() + i*4, 4});
     }
     // Then we perform 20 rounds of the quarter round function.
@@ -61,7 +44,7 @@ static std::array<std::uint32_t, 16> chacha20_block(
 }
 
 // text.size() must be a multiple of 64
-static void chacha20_encrypt(const snakeio::key_t& key, std::uint32_t counter, const snakeio::nonce_t& nonce,
+static void chacha20_encrypt(const snakeio::key_t& key, std::uint32_t counter, snakeio::nonce_view nonce,
     std::span<std::byte> text) noexcept {
     [[assume(text.size() % 64 == 0)]];
     for (std::size_t i = 0; i < text.size() / 64; ++i) {
@@ -92,8 +75,7 @@ struct radix26 {
         out.limbs[4] = hi >> (spill + radix);
         return out;
     }
-    constexpr operator snakeio::tag_t() const noexcept {
-        snakeio::tag_t out;
+    constexpr void store(snakeio::tag_view out) const noexcept {
         auto limb = limbs.begin();
         int pos = 0;
         for (std::byte& byte : out) {
@@ -107,7 +89,6 @@ struct radix26 {
                 pos += 8;
             }
         }
-        return out;
     }
 
     constexpr void propagate_carry() noexcept {
@@ -154,7 +135,7 @@ struct radix26 {
 };
 
 // text.size() must be a multiple of 16
-static snakeio::tag_t poly1305_mac(std::span<const std::byte> text, const snakeio::key_t& key) noexcept {
+static void poly1305_mac(snakeio::tag_view out, std::span<const std::byte> text, const snakeio::key_t& key) noexcept {
     auto r = radix26::load(std::span<const std::byte, 16>(key.begin(), 16)),
         s = radix26::load(std::span<const std::byte, 16>(key.begin() + 16, 16));
     // clamp
@@ -172,10 +153,10 @@ static snakeio::tag_t poly1305_mac(std::span<const std::byte> text, const snakei
     }
     a += s;
     a.propagate_carry();
-    return a;
+    a.store(out);
 }
 
-static snakeio::key_t poly1305_key_gen(const snakeio::key_t& key, const snakeio::nonce_t& nonce) noexcept {
+static snakeio::key_t poly1305_key_gen(const snakeio::key_t& key, snakeio::const_nonce_view nonce) noexcept {
     snakeio::key_t out;
     const auto block = chacha20_block(key, 0, nonce);
     for (std::size_t i = 0; i < out.size() / 4; ++i) {
@@ -185,20 +166,21 @@ static snakeio::key_t poly1305_key_gen(const snakeio::key_t& key, const snakeio:
 }
 
 void snakeio::data_packet::encrypt(const key_t& key) noexcept {
-    const auto otk = poly1305_key_gen(key, nonce);
-    chacha20_encrypt(key, 1, nonce, text());
-    store_32(std::span<std::byte, 4>(buffer.begin(), 4), session_id);
-    store_32(std::span<std::byte, 4>(buffer.begin() + 4, 4), player_id);
-    std::ranges::copy(nonce, buffer.begin() + 8);
-    tag = poly1305_mac(std::span(buffer.begin(), buffer.end() - suffix_size), otk);
-    std::ranges::copy(tag, buffer.end() - suffix_size);
+    const auto otk = poly1305_key_gen(key, nonce());
+    chacha20_encrypt(key, 1, nonce(), text());
+    poly1305_mac(tag(), std::span(begin(), end() - tag_view::extent), otk);
 }
 
-bool snakeio::data_packet::verify(const key_t& key) const noexcept {
-    const auto otk = poly1305_key_gen(key, nonce);
-    return poly1305_mac(std::span(buffer.begin(), buffer.end() - suffix_size), otk) == tag;
+snakeio::data_packet::verify_result snakeio::data_packet::verify(const key_t& key) const noexcept {
+    using enum verify_result;
+    if (size() < header_size) [[unlikely]] return too_short;
+    if (text().size() % 64 != 0) [[unlikely]] return invalid_text_size;
+    const auto otk = poly1305_key_gen(key, nonce());
+    tag_t tag;
+    poly1305_mac(tag, std::span(begin(), end() - tag_view::extent), otk);
+    return std::ranges::equal(tag, this->tag()) ? ok : invalid_tag;
 }
 
 void snakeio::data_packet::decrypt(const key_t& key) noexcept {
-    chacha20_encrypt(key, 1, nonce, text());
+    chacha20_encrypt(key, 1, nonce(), text());
 }
