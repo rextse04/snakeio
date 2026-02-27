@@ -18,8 +18,9 @@ The game opens three ports:
 | Port  | Plane   | Protocol                 | Client             |
 |-------|---------|--------------------------|--------------------|
 | 50000 | Control | WebSocket over TLS (wss) | External           |
-| 50001 | Data    | UDP                      | Internal (::50000) |
-| 50002 | Data    | UDP, encrypted           | External           |
+| 50001 | Control | UDP                      | Internal (::50002) |
+| 50002 | Data    | UDP                      | Internal (::50001) |
+| 50003 | Data    | UDP, encrypted           | External           |
 
 # Outline of Game Flow
 1. Clients connect to 50000.
@@ -37,30 +38,30 @@ Clients need to respond with (true, 0) until all players have joined.
 8. When tick reaches max_tick, i.e. when client receives a packet at tick = max_tick - 1,
 game terminates. Clients disconnect.
 
-# 50001
+# 50002
 This is the control UDP port used by the local control plane (bound to the IPv6 loopback).
 It accepts simple commands from the internal control client (for example, the WebSocket server on port 50000)
 to manage server lifecycle and create new game sessions.
 
-## Client to Server
-| Field | Type     | Size     | Description                                  |
-|-------|----------|----------|----------------------------------------------|
-| cmd   | unsigned | 1        | Command ID. 0 = kill, 1 = new session token. |
-| args  | -        | variable | See below.                                   |
+## Client to Server (50001 -> 50002)
+| Field | Type     | Size     | Description                                 |
+|-------|----------|----------|---------------------------------------------|
+| cmd   | unsigned | 1        | Command ID. 0 = kill, 1 = new session token |
+| args  | -        | variable | See below.                                  |
 
-### Kill
+### Kill (0)
 No arguments. No response.
 
-### New Session Token
+### New Session Token (1)
 | Field         | Type     | Size               | Description                                  |
 |---------------|----------|--------------------|----------------------------------------------|
 | session_token | char[5]  | 5                  | ASCII token provided by the control client.  |
 | human_players | unsigned | 1                  | Number of human players requested.           |
 | ai_players    | unsigned | 1                  | Number of AI players requested.              |
 | keys          | byte[]   | 32 * human_players | Array of 32-byte keys for each human player. |
-Responds on success.
+Always responds.
 
-## Server to Client
+## Server to Client (50002 -> 50001)
 If the client sends a command that requires a response, the server responds with the following packet:
 
 | Field | Type     | Size     | Description |
@@ -68,14 +69,15 @@ If the client sends a command that requires a response, the server responds with
 | cmd   | unsigned | 1        | Command ID. |
 | args  | -        | variable | See below.  |
 
-### New Session Token
+### New Session Token (1)
 | Field         | Type     | Size | Description                                                 |
 |---------------|----------|------|-------------------------------------------------------------|
 | session_token | char[5]  | 5    | ASCII token provided by the control client.                 |
 | result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: unknown error. |
-| session_id    | unsigned | 4    | Session ID assigned to session_token.                       |
+| padding       | -        | 1    | Padding.                                                    |
+| session_id    | unsigned | 4    | Session ID assigned to session_token.                       | |
 
-# 50002
+# 50003
 ## Client to Server
 | Field              | Type  | Size | Description                                             |
 |--------------------|-------|------|---------------------------------------------------------|
@@ -155,6 +157,9 @@ All packets between client and server are encrypted using ChaCha20-poly1305.
 | ciphertext | byte[]   | variable | Ciphertext.            |
 | tag        | byte[16] | 16       | Tag.                   |
 - player_id, sender and nonce_part form the nonce.
+- When sender is 0 (the packet is from client), nonce_part is implementation-defined.
+Only uniqueness of the nonce needs to be guaranteed,
+so clients can use any method to generate nonce_part as long as it ensures uniqueness.
 - When sender is 1 (the packet is from server), nonce_part is the tick number.
   - As only one packet is sent per tick, this is sufficient to ensure uniqueness.
 - Size of ciphertext must be a multiple of 64.

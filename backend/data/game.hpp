@@ -23,12 +23,12 @@ namespace snakeio {
     public:
         // Allocate memory_ and initializes the impl in it.
         game();
-        enum class add_session_error {
+        constexpr const auto& session_manager() const noexcept { return sm_; }
+        enum class add_session_error : unsigned char {
             no_memory = 1,
             too_many_players,
             unknown_error
         };
-        constexpr const auto& session_manager() const noexcept { return sm_; }
         std::expected<id_t, add_session_error> add_session(
             id_t human_players, id_t ai_players, std::span<const key_t> keys) noexcept;
         void bind(std::stop_token stop_token, int sock) noexcept;

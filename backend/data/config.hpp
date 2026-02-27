@@ -37,6 +37,10 @@ namespace snakeio {
     constexpr scalar_t seg_to_food_prob = 0.35;
     constexpr size_t food_per_player_tick = 1;
 
+    constexpr std::uint_least16_t control_plane_ext_port = 50000,
+        control_plane_int_port = 50001,
+        data_plane_int_port = 50002,
+        data_plane_ext_port = 50003;
     constexpr size_t data_packet_align = 64;
     constexpr size_t align(size_t text_size) noexcept {
         return data_packet_align * (text_size / data_packet_align + (text_size % data_packet_align != 0));

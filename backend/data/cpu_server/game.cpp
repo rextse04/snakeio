@@ -62,6 +62,7 @@ std::expected<id_t, game::add_session_error> game::add_session(
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
         session.food_set.insert({.pos = {width_dist(rng_), height_dist(rng_)}, .width = food_width_dist(rng_)});
     }
+    sm_.activate(*session_id);
     return *session_id;
 }
 

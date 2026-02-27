@@ -55,7 +55,6 @@ static void control_port(std::stop_source stop_source, int sock) {
                 return;
             }
             case 1: { // new session token
-                // format: <1><session_token: 5><human_players: 1><ai_players: 1><keys: human_players * 32>
                 constexpr std::size_t header_size = 1 + 5 + 1 + 1;
                 if (recv_len < header_size) {
                     goto invalid_format;
@@ -121,12 +120,12 @@ static void data_port(std::stop_token stop_token, int sock) {
 int main() {
     const int control_sock = open_port("control", {
         .sin6_family = AF_INET6,
-        .sin6_port = htons(50001),
+        .sin6_port = htons(data_plane_int_port),
         .sin6_addr = in6addr_loopback
     });
     const int data_sock = open_port("data", {
         .sin6_family = AF_INET6,
-        .sin6_port = htons(50002),
+        .sin6_port = htons(data_plane_ext_port),
         .sin6_addr = in6addr_any
     });
     if (control_sock < 0 || data_sock < 0) {
