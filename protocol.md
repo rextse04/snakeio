@@ -76,6 +76,7 @@ If the client sends a command that requires a response, the server responds with
 | result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: unknown error. |
 | padding       | -        | 1    | Padding.                                                    |
 | session_id    | unsigned | 4    | Session ID assigned to session_token.                       | |
+Size = 12
 
 # 50003
 ## Client to Server

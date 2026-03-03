@@ -237,7 +237,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
         for (id_t i = 0; i < game_max_sessions; ++i) {
             if (!game.sm_[i]) continue;
             session& session = impl_.sessions[i];
-            const tick_t tick = std::atomic_ref(session.tick).fetch_add(1, std::memory_order::acq_rel);
+            const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::acquire);
             std::array<in_packet, game_max_players> in_packets;
             for (id_t j = 0; j < session.players; ++j) {
                 in_packets[j] = std::atomic_ref(impl_.clients[i][j].last_packet).load(std::memory_order::acquire);
@@ -246,7 +246,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             size_t delta_text_size;
             std::byte snapshot_text[snapshot_packet_max_text_size];
             size_t snapshot_text_size;
-            if (session.tick == 0) [[unlikely]] {
+            if (tick == 0) [[unlikely]] {
                 if (std::ranges::all_of(in_packets, [tick](const in_packet& packet) { return packet.tick == tick; })) {
                     snapshot_text_size = store_snapshot(snapshot_text, tick, session);
                 } else {
@@ -261,12 +261,13 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                         packet.session_id(i);
                         packet.player_id(j);
                         packet.sender(data_packet::sender_t::server);
-                        store_32(packet.nonce_part(), session.tick);
+                        store_32(packet.nonce_part(), tick);
                         std::ranges::copy_n(lobby_status_text, lobby_status_text_size, packet.text().begin());
                         packet.encrypt(impl_.clients[i][j].key);
                         sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
                             reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
                     }
+                    std::atomic_ref(session.tick).store(1, std::memory_order::release);
                     continue;
                 }
             } else {
@@ -276,7 +277,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 snapshot_requested = false;
                 for (id_t j = 0; j < session.players; ++j) {
                     const in_packet& in_packet = in_packets[j];
-                    if (in_packet.tick != tick) continue;
+                    if (in_packet.tick != tick) goto next_session;
                     snapshot_requested |= in_packet.snapshot_requested;
                     session.snakes[j].basic.angle = in_packet.angle;
                 }
@@ -348,6 +349,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 if (snapshot_requested) {
                     snapshot_text_size = store_snapshot(snapshot_text, tick, session);
                 }
+                std::atomic_ref(session.tick).store(tick + 1, std::memory_order::release);
             }
             // Send packets
             for (id_t j = 0; j < session.players; ++j) {
@@ -361,7 +363,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 packet.session_id(i);
                 packet.player_id(j);
                 packet.sender(data_packet::sender_t::server);
-                store_32(packet.nonce_part(), session.tick);
+                store_32(packet.nonce_part(), tick);
                 const std::byte* text = snapshot_requested ? snapshot_text : delta_text;
                 std::ranges::copy_n(text, snapshot_requested ? snapshot_text_size : delta_text_size,
                     packet.text().begin());
@@ -373,6 +375,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             if (tick >= session.max_tick) {
                 game.sm_.deallocate(i);
             }
+            next_session:
         }
     }
 }

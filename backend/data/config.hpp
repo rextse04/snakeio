@@ -12,7 +12,7 @@ namespace snakeio {
     using id_t = std::uint_least32_t;
     using scalar_t = float;
     static_assert(std::numeric_limits<scalar_t>::is_iec559 && sizeof(scalar_t) == 4);
-    using score_t = utils::integer<std::uint32_t, utils::integral_behavior::sat>;
+    using score_t = utils::integer<std::uint_least32_t, utils::integral_behavior::sat>;
     using key_t = std::array<std::byte, 32>;
     using tick_t = std::uint_least16_t;
 

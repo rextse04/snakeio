@@ -1,0 +1,29 @@
+.session-token {
+    font-size: xx-large;
+    font-family: monospace;
+    width: 5em;
+}
+
+.lobby > .main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.lobby .lobby-room {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.lobby .lobby-room > * {
+    padding-bottom: 3px;
+    border-bottom: 1px solid lightgray;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.lobby .start-btn {
+    font-size: xx-large;
+}

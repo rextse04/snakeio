@@ -173,7 +173,7 @@ void snakeio::data_packet::encrypt(const key_t& key) noexcept {
 
 snakeio::data_packet::verify_result snakeio::data_packet::verify(const key_t& key) const noexcept {
     using enum verify_result;
-    if (size() < header_size) [[unlikely]] return too_short;
+    if (size() <= header_size) [[unlikely]] return too_short;
     if (text().size() % 64 != 0) [[unlikely]] return invalid_text_size;
     const auto otk = poly1305_key_gen(key, nonce());
     tag_t tag;

@@ -10,6 +10,8 @@
 #include <span>
 #include <chrono>
 
+#include "utils.hpp"
+
 using namespace snakeio;
 
 game game_;
@@ -73,7 +75,8 @@ static void control_port(std::stop_source stop_source, int sock) {
                 const auto id = game_.add_session(human_players, ai_players, std::span(keys, human_players));
                 if (id.has_value()) {
                     logger::debug("Session token {} mapped to session ID {}.", token, id.value());
-                    std::memcpy(buffer + 6, &id.value(), sizeof(id_t));
+                    buffer[6] = std::byte(0);
+                    store_32(std::span<std::byte, 4>(buffer + 8, 4), id.value());
                 } else {
                     std::string_view error;
                     switch (id.error()) {
@@ -95,12 +98,13 @@ static void control_port(std::stop_source stop_source, int sock) {
                     logger::warn("Failed to create new session: {}.", error);
                     buffer[6] = static_cast<std::byte>(id.error());
                 }
-                sendto(sock, buffer, 6 + sizeof(id_t), 0,
+                sendto(sock, buffer, header_size + 4, 0,
                     reinterpret_cast<const sockaddr*>(&client_addr), client_addr_len);
                 break;
             }
             default: {
                 logger::warn("Received unknown command on control port.");
+                logger::print_packet(logger::debug, std::span(buffer, recv_len));
                 break;
             }
         }

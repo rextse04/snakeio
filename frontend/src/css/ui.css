@@ -1,0 +1,72 @@
+#ui {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#ui > * {
+    padding: 20px;
+    border: 1px solid darkgray;
+    border-radius: 10px;
+    background-color: dimgray;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+button {
+    border: 1px solid white;
+    border-radius: 5px;
+    background-color: transparent;
+    font: inherit;
+    color: inherit;
+    display: flex;
+    cursor: pointer;
+}
+button:hover {
+    background-color: gray;
+}
+button:active, button:disabled {
+    background-color: darkgray;
+}
+button:disabled {
+    cursor: auto;
+}
+input[type=checkbox] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.row-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.row-input > .main {
+    flex: 1;
+}
+.username {
+    width: 300px;
+}
+input.validated {
+    background-color: lightgreen;
+}
+input.validated:invalid {
+    background-color: lightpink;
+}
+.button-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.icon {
+    border: none !important;
+    padding: 5px;
+}
