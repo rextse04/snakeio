@@ -5,16 +5,20 @@ use std::{
 };
 
 use tauri::{Manager, State, Emitter, AppHandle};
+use tauri::ipc::{InvokeBody, Request};
 
 struct UdpState {
     socket: Arc<UdpSocket>,
 }
 
 #[tauri::command]
-fn send_packet(state: State<UdpState>, data: Vec<u8>) -> Result<(), String> {
+fn send_packet(state: State<UdpState>, request: Request<'_>) -> Result<(), String> {
+    let InvokeBody::Raw(data) = request.body() else {
+        return Err("Invalid request body".into());
+    };
     state
         .socket
-        .send(&data)
+        .send(data)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -27,7 +31,7 @@ fn exit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Change this to your server address
-    let server_addr = "127.0.0.1:50004";
+    let server_addr = "127.0.0.1:50003";
 
     // Bind to any available local port
     let socket = UdpSocket::bind("0.0.0.0:0")
@@ -55,7 +59,7 @@ pub fn run() {
                             let data = buf[..len].to_vec();
 
                             // Send to frontend
-                            window.emit("udp_packet", data).unwrap();
+                            window.emit("recv_packet", data).unwrap();
                         }
                     }
                 });

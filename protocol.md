@@ -87,10 +87,10 @@ Size = 12
 Size = 8
 
 ## Server to Client
-| Field         | Type         | Size     | Description                             |
-|---------------|--------------|----------|-----------------------------------------|
-| type          | unsigned     | 4        | 0: delta, 1: snapshot, 2: lobby_status  |
-| type specific | -            | variable | See below.                              |
+| Field         | Type         | Size     | Description                                            |
+|---------------|--------------|----------|--------------------------------------------------------|
+| type          | unsigned     | 4        | 0: delta, 1: snapshot, 2: lobby_status, 3: termination |
+| type specific | -            | variable | See below.                                             |
 
 ### delta
 | Field              | Type             | Size                   | Description               |
@@ -118,6 +118,12 @@ Max size = 156048 (~154KB)
 |-----------|--------|-------------|-----------------------------------|
 | connected | bool[] | 1 * players | Whether each player is connected. |
 Max size = 16
+
+### termination
+| Field        | Type          | Size         | Description         |
+|--------------|---------------|--------------|---------------------|
+| snake_basics | snake_basic[] | 24 * players | Final snake states. |
+Max size = 384
 
 ### snake_basic
 | Field   | Type     | Size | Description                 |
@@ -147,7 +153,8 @@ Max size = 8224 (~8KB)
 Size = 12
 
 # Encryption and Decryption
-All packets between client and server are encrypted using ChaCha20-poly1305.
+All packets between client and server are encrypted using ChaCha20-poly1305
+([RFC 8439](https://www.rfc-editor.org/rfc/rfc8439.html)).
 ## Format of encrypted packets
 | Field      | Type     | Size     | Description            |
 |------------|----------|----------|------------------------|
@@ -163,7 +170,7 @@ Only uniqueness of the nonce needs to be guaranteed,
 so clients can use any method to generate nonce_part as long as it ensures uniqueness.
 - When sender is 1 (the packet is from server), nonce_part is the tick number.
   - As only one packet is sent per tick, this is sufficient to ensure uniqueness.
-- Size of ciphertext must be a multiple of 64.
-  - This is required for the decryption algorithm to work correctly.
-  Server must check that the ciphertext size is divisible by 64 before decrypting.
-  - This automatically guarantees the packet size is a multiple of 16.
+- section_id, player_id, sender and nonce_part form the additional authenticated data (AAD).
+In other words, when verifying tag, treat the length of AAD as 16.
+- Size of ciphertext must be a multiple of 16.
+  - Server must check that the ciphertext size is divisible by 16 before decryption.

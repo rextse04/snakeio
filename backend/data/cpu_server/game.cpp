@@ -69,7 +69,6 @@ std::expected<id_t, game::add_session_error> game::add_session(
 void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept {
     impl& impl_ = game.get_impl();
     std::byte buffer[in_packet_max_text_size + data_packet::header_size];
-    data_packet packet(buffer);
     sockaddr_storage client_addr{};
     while (true) {
         if (stop_token.stop_requested()) [[unlikely]] {
@@ -77,12 +76,18 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
             return;
         }
         socklen_t client_addr_len = sizeof(client_addr);
-        const ssize_t recv_len = recvfrom(sock, packet.bytes().data(), sizeof(buffer), 0,
+        const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
             reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
         if (recv_len < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) [[unlikely]] {
                 logger::warn("recvfrom failed on data port: {}.", std::strerror(errno));
             }
+            continue;
+        }
+        data_packet packet(buffer, recv_len);
+        if (recv_len <= data_packet::header_size) [[unlikely]] {
+            logger::debug("Received packet that is too short from {}.", client_addr);
+            logger::print_packet(logger::debug, packet.bytes());
             continue;
         }
         if (!game.sm_[packet.session_id()]) [[unlikely]] {
@@ -101,21 +106,17 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
         switch (packet.verify(client.key)) {
             using enum data_packet::verify_result;
             case ok: break;
-            case too_short: {
-                logger::debug("Received packet that is too short from {}.", client_addr);
+            case too_short: std::unreachable();
+            case invalid_size: {
+                logger::debug("Received packet with invalid size from {}.", client_addr);
                 logger::print_packet(logger::debug, packet.bytes());
                 continue;
-            }
-            case invalid_text_size: {
-                logger::debug("Received packet with invalid text size from {}.", client_addr);
-                logger::print_packet(logger::debug, packet.bytes());
-                break;
             }
             case invalid_tag: {
                 logger::debug("Received packet with invalid tag for session {} player {} from {}.",
                     packet.session_id(), packet.player_id(), client_addr);
                 logger::print_packet(logger::debug, packet.bytes());
-                break;
+                continue;
             }
             default: std::unreachable();
         }
@@ -374,6 +375,23 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             // Increment tick
             if (tick >= session.max_tick) {
                 game.sm_.deallocate(i);
+                std::byte termination_text[termination_max_text_size];
+                for (id_t j = 0; j < session.players; ++j) {
+                    store_snake_basic(std::span<std::byte, 24>(termination_text + j * 24, 24), session.snakes[j].basic);
+                }
+                std::byte buffer[termination_max_text_size + data_packet::header_size];
+                data_packet packet(buffer, sizeof(buffer));
+                for (id_t j = 0; j < session.players; ++j) {
+                    const in_packet& in_packet = in_packets[j];
+                    packet.session_id(i);
+                    packet.player_id(j);
+                    packet.sender(data_packet::sender_t::server);
+                    store_32(packet.nonce_part(), session.max_tick + 1);
+                    std::ranges::copy_n(termination_text, termination_max_text_size, packet.text().begin());
+                    packet.encrypt(impl_.clients[i][j].key);
+                    sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
+                        reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
+                }
             }
             next_session:
         }

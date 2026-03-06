@@ -14,3 +14,5 @@ foreach(dir ${SERVER_DIRS})
         target_link_libraries(${dir}_o PRIVATE atomic)
     endif()
 endforeach()
+
+add_subdirectory(tests)

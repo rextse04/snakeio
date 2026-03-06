@@ -74,7 +74,17 @@ wss.on("connection", (ws: PlayerSocket) => {
         username: ws.info!.username
     }));
     ws.on("message", raw_msg => {
-        const msg = JSON.parse(raw_msg.toString());
+        let msg: any;
+        try {
+            msg = JSON.parse(raw_msg.toString());
+        } catch (e) {
+            ws.send(JSON.stringify({
+                type: "error",
+                error: "Invalid JSON."
+            }));
+            return;
+        }
+        console.debug(msg);
         switch (msg.type) {
             case "register": {
                 ws.info!.username = msg.username;
@@ -235,7 +245,7 @@ wss.on("connection", (ws: PlayerSocket) => {
                                 player.info.ws.send(JSON.stringify({
                                     type: "room_start",
                                     session_id: session_id,
-                                    key: new TextDecoder().decode(buffer.subarray(i * KEY_LEN, (i+1) * KEY_LEN))
+                                    key: buffer.subarray(i * KEY_LEN, (i+1) * KEY_LEN).toJSON().data
                                 }));
                             }
                             lobby.remove_room(result[0].token);

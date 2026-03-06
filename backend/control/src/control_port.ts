@@ -55,7 +55,7 @@ class ControlPort {
                 console.debug(buffer);
                 switch (buffer.readUInt8(6)) {
                     case 0: {
-                        res(buffer.readUInt32LE(7));
+                        res(buffer.readUInt32LE(8));
                         break;
                     }
                     case 1: {

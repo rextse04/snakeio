@@ -9,14 +9,19 @@ namespace snakeio {
     using nonce_t = std::array<std::byte, 12>;
     using nonce_view = std::span<std::byte, 12>;
     using const_nonce_view = std::span<const std::byte, 12>;
+    using volatile_nonce_view = std::span<volatile std::byte, 12>;
+    using const_volatile_nonce_view = std::span<const volatile std::byte, 12>;
+
     using tag_t = std::array<std::byte, 16>;
     using tag_view = std::span<std::byte, 16>;
     using const_tag_view = std::span<const std::byte, 16>;
+    using volatile_tag_view = std::span<volatile std::byte, 16>;
+    using const_volatile_tag_view = std::span<const volatile std::byte, 16>;
 
     // See protocol.md.
     class data_packet : std::span<std::byte> {
     public:
-        static constexpr size_t header_size = 32;
+        static constexpr size_t aad_size = 16, header_size = aad_size + tag_view::extent;
 
         using std::span<std::byte>::span;
         data_packet() = delete;
@@ -47,10 +52,10 @@ namespace snakeio {
             return self.bytes().template subspan<12, 4>();
         }
         constexpr auto nonce(this auto&& self) noexcept {
-            return self.bytes().template subspan<8, nonce_view::extent>();
+            return self.bytes().template subspan<4, nonce_view::extent>();
         }
         constexpr auto text(this auto&& self) noexcept {
-            return std::span(self.bytes().begin() + 20, self.bytes().end() - tag_view::extent);
+            return std::span(self.bytes().begin() + aad_size, self.bytes().end() - tag_view::extent);
         }
         template <typename Self>
         constexpr auto tag(this Self&& self) noexcept {
@@ -63,11 +68,12 @@ namespace snakeio {
         enum class verify_result {
             ok,
             too_short,
-            invalid_text_size,
+            invalid_size,
             invalid_tag
         };
         // Verifies packet size and tag.
-        [[nodiscard]] verify_result verify(const key_t& key) const noexcept;
+        // Implementation is allowed to replace tag() with appropriate values to satisfy the packet format in RFC 8439.
+        [[nodiscard]] verify_result verify(const key_t& key) noexcept;
         // Decrypts the text in-place and fill fields.
         // You must call verify() before calling this function, otherwise authenticity is not guaranteed.
         void decrypt(const key_t& key) noexcept;

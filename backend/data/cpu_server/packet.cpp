@@ -2,18 +2,20 @@
 #include <packet.hpp>
 #include <utils.hpp>
 #include <cstddef>
+#include <algorithm>
 
-static void quarter_round(std::uint32_t& a, std::uint32_t& b, std::uint32_t& c, std::uint32_t& d) noexcept {
+static void quarter_round(
+    std::uint_least32_t& a, std::uint_least32_t& b, std::uint_least32_t& c, std::uint_least32_t& d) noexcept {
     a += b; d ^= a; d = (d << 16) | (d >> 16);
     c += d; b ^= c; b = (b << 12) | (b >> 20);
     a += b; d ^= a; d = (d << 8) | (d >> 24);
     c += d; b ^= c; b = (b << 7) | (b >> 25);
 }
 
-static std::array<std::uint32_t, 16> chacha20_block(
-    const snakeio::key_t& key, std::uint32_t counter, snakeio::const_nonce_view nonce) noexcept {
+static std::array<std::uint_least32_t, 16> chacha20_block(
+    const snakeio::key_t& key, std::uint_least32_t counter, snakeio::const_nonce_view nonce) noexcept {
     // The state is initialized as follows:
-    std::array<std::uint32_t, 16> out;
+    std::array<std::uint_least32_t, 16> out;
     out[0] = 0x61707865;
     out[1] = 0x3320646e;
     out[2] = 0x79622d32;
@@ -43,29 +45,34 @@ static std::array<std::uint32_t, 16> chacha20_block(
     return out;
 }
 
-// text.size() must be a multiple of 64
-static void chacha20_encrypt(const snakeio::key_t& key, std::uint32_t counter, snakeio::nonce_view nonce,
+static void chacha20_encrypt(const snakeio::key_t& key, std::uint_least32_t counter, snakeio::nonce_view nonce,
     std::span<std::byte> text) noexcept {
-    [[assume(text.size() % 64 == 0)]];
-    for (std::size_t i = 0; i < text.size() / 64; ++i) {
-        const auto key_stream = chacha20_block(key, counter + i, nonce);
-        const auto key_stream_bytes = reinterpret_cast<const std::byte*>(key_stream.data());
-        for (std::size_t j = 0; j < 64; ++j) {
-            text[i*64+j] ^= *(key_stream_bytes + j);
+    std::size_t i = 0;
+    for (std::size_t j = 0; j < text.size() / 64; ++j) {
+        const auto key_stream = chacha20_block(key, counter++, nonce);
+        for (std::size_t k = 0; k < 64; ++k) {
+            text[i++] ^= static_cast<std::byte>(key_stream[k/4] >> ((k%4) * 8));
+        }
+    }
+    if (text.size() % 64 != 0) {
+        const auto key_stream = chacha20_block(key, counter, nonce);
+        for (std::size_t k = 0; k < text.size() % 64; ++k) {
+            text[i++] ^= static_cast<std::byte>(key_stream[k/4] >> ((k%4) * 8));
         }
     }
 }
 
 struct radix26 {
     using base_type = std::uint_least32_t;
-    static constexpr int radix = 26;
+    using ext_type = std::uint_least64_t;
+    static constexpr int radix = 26, size = 5;
 
-    std::array<base_type, 5> limbs;
+    std::array<base_type, size> limbs;
 
     static constexpr radix26 load(std::span<const std::byte, 16> bytes) noexcept {
         radix26 out;
-        const std::uint_least64_t lo = snakeio::load_64(std::span<const std::byte, 8>(bytes.begin(), 8)),
-            hi = snakeio::load_64(std::span<const std::byte, 8>(bytes.begin() + 8, 8));
+        const std::uint_least64_t lo = snakeio::load_64(bytes.subspan<0, 8>()),
+            hi = snakeio::load_64(bytes.subspan<8, 8>());
         constexpr std::uint_least64_t mask = (base_type(1) << radix) - 1;
         out.limbs[0] = lo & mask;
         out.limbs[1] = (lo >> radix) & mask;
@@ -79,9 +86,11 @@ struct radix26 {
         auto limb = limbs.begin();
         int pos = 0;
         for (std::byte& byte : out) {
-            if (pos + 8 > radix) {
+            if (pos + 8 >= radix) {
                 const int spill = pos + 8 - radix;
-                byte = static_cast<std::byte>((*limb >> pos) | (*(limb + 1) & ((base_type(1) << spill) - 1)));
+                const auto lo = static_cast<std::byte>(*limb >> pos),
+                    hi = static_cast<std::byte>(*(limb + 1) & ((base_type(1) << spill) - 1));
+                byte = lo | (hi << (8 - spill));
                 ++limb;
                 pos = spill;
             } else {
@@ -91,50 +100,57 @@ struct radix26 {
         }
     }
 
-    constexpr void propagate_carry() noexcept {
-        while (limbs[limbs.size() - 1] >> radix) {
-            limbs[0] += (limbs[limbs.size() - 1] >> radix) * 5;
-            limbs[limbs.size() - 1] &= (base_type(1) << radix) - 1;
-            for (std::size_t i = 0; i < limbs.size() - 1; ++i) {
-                limbs[i+1] += limbs[i] >> radix;
-                limbs[i] &= (base_type(1) << radix) - 1;
-            }
+    static constexpr void propagate_once(auto& limbs) noexcept {
+        limbs[0] += (limbs[size - 1] >> radix) * 5;
+        limbs[size - 1] &= (base_type(1) << radix) - 1;
+        for (std::size_t i = 0; i < size - 1; ++i) {
+            limbs[i+1] += limbs[i] >> radix;
+            limbs[i] &= (base_type(1) << radix) - 1;
+        }
+    }
+    static constexpr void propagate(auto& limbs) noexcept {
+        propagate_once(limbs);
+        propagate_once(limbs);
+    }
+    constexpr void to_canonical() noexcept {
+        propagate(limbs);
+        auto limbs_ = limbs;
+        limbs_[0] += 5;
+        propagate_once(limbs_);
+        base_type& top = limbs_[limbs_.size() - 1];
+        constexpr int carry_pos = 130 - radix * (limbs_.size() - 1);
+        const base_type mask = -(top >> carry_pos); // *carry_pos = 0 => mask = 0; *carry_pos = 1 => mask = -1
+        top &= ~(base_type(1) << carry_pos);
+        for (std::size_t i = 0; i < limbs_.size() - 1; ++i) {
+            limbs[i] = (limbs[i] & ~mask) | (limbs_[i] & mask);
         }
     }
     constexpr radix26& operator+=(const radix26& other) noexcept {
-        for (std::size_t i = 0; i < limbs.size(); ++i) {
+        for (std::size_t i = 0; i < size; ++i) {
             limbs[i] = limbs[i] + other.limbs[i];
         }
         return *this;
     }
     constexpr radix26& operator*=(const radix26& other) noexcept {
-        std::array<std::uint_least64_t, 9> temp{};
+        std::array<ext_type, 9> temp{};
         // schoolbook multiplication
-        for (std::size_t i = 0; i < limbs.size(); ++i) {
-            for (std::size_t j = 0; j < limbs.size(); ++j) {
-                temp[i+j] += limbs[i] * other.limbs[j];
+        for (std::size_t i = 0; i < size; ++i) {
+            for (std::size_t j = 0; j < size; ++j) {
+                temp[i+j] += static_cast<ext_type>(limbs[i]) * static_cast<ext_type>(other.limbs[j]);
             }
         }
         // reduce temp modulo 2^130 - 5.
-        for (std::size_t i = limbs.size(); i < temp.size(); ++i) {
-            temp[i - limbs.size()] += 5 * temp[i];
+        for (std::size_t i = size; i < temp.size(); ++i) {
+            temp[i - size] += 5 * temp[i];
         }
-        do {
-            temp[0] += (temp[limbs.size() - 1] >> radix) * 5;
-            temp[limbs.size() - 1] &= (base_type(1) << radix) - 1;
-            for (std::size_t i = 0; i < limbs.size() - 1; ++i) {
-                temp[i+1] += temp[i] >> radix;
-                temp[i] &= (base_type(1) << radix) - 1;
-            }
-        } while (temp[limbs.size() - 1] >> radix);
-        for (std::size_t i = 0; i < limbs.size(); ++i) {
-            limbs[i] = temp[i];
-        }
+        propagate(temp);
+        std::ranges::copy_n(temp.begin(), size, limbs.begin());
         return *this;
     }
 };
 
 // text.size() must be a multiple of 16
+// out and text can overlap
 static void poly1305_mac(snakeio::tag_view out, std::span<const std::byte> text, const snakeio::key_t& key) noexcept {
     auto r = radix26::load(std::span<const std::byte, 16>(key.begin(), 16)),
         s = radix26::load(std::span<const std::byte, 16>(key.begin() + 16, 16));
@@ -146,13 +162,13 @@ static void poly1305_mac(snakeio::tag_view out, std::span<const std::byte> text,
     r.limbs[4] &= 0x00fffff;
     radix26 a{};
     for (std::size_t i = 0; i < text.size() / 16; ++i) {
-        auto block = radix26::load(std::span<const std::byte, 16>{text.begin() + i*16, 16});
-        block.limbs[4] |= 1 << 24; // add the 1 bit
-        a += block;
+        auto n = radix26::load(std::span<const std::byte, 16>{text.begin() + i*16, 16});
+        n.limbs[128 / radix26::radix] |= radix26::base_type(1) << (128 % radix26::radix); // n += 2^128
+        a += n;
         a *= r;
     }
     a += s;
-    a.propagate_carry();
+    a.to_canonical();
     a.store(out);
 }
 
@@ -168,17 +184,30 @@ static snakeio::key_t poly1305_key_gen(const snakeio::key_t& key, snakeio::const
 void snakeio::data_packet::encrypt(const key_t& key) noexcept {
     const auto otk = poly1305_key_gen(key, nonce());
     chacha20_encrypt(key, 1, nonce(), text());
-    poly1305_mac(tag(), std::span(begin(), end() - tag_view::extent), otk);
+    store_64(tag().subspan<0, 8>(), aad_size);
+    store_64(tag().subspan<8, 8>(), text().size());
+    poly1305_mac(tag(), *this, otk);
 }
 
-snakeio::data_packet::verify_result snakeio::data_packet::verify(const key_t& key) const noexcept {
+static bool safe_tag_equal(snakeio::const_volatile_tag_view a, snakeio::const_volatile_tag_view b) noexcept {
+    volatile std::byte out{};
+    for (std::size_t i = 0; i < snakeio::tag_view::extent; ++i) {
+        out = out | (a[i] ^ b[i]);
+    }
+    return out == std::byte(0);
+}
+
+snakeio::data_packet::verify_result snakeio::data_packet::verify(const key_t& key) noexcept {
     using enum verify_result;
     if (size() <= header_size) [[unlikely]] return too_short;
-    if (text().size() % 64 != 0) [[unlikely]] return invalid_text_size;
+    if (size() % data_packet_align != 0) [[unlikely]] return invalid_size;
     const auto otk = poly1305_key_gen(key, nonce());
-    tag_t tag;
-    poly1305_mac(tag, std::span(begin(), end() - tag_view::extent), otk);
-    return std::ranges::equal(tag, this->tag()) ? ok : invalid_tag;
+    tag_t tag, packet_tag;
+    std::ranges::copy(this->tag(), packet_tag.begin());
+    store_64(this->tag().subspan<0, 8>(), 16);
+    store_64(this->tag().subspan<8, 8>(), text().size());
+    poly1305_mac(tag, *this, otk);
+    return safe_tag_equal(tag, packet_tag) ? ok : invalid_tag;
 }
 
 void snakeio::data_packet::decrypt(const key_t& key) noexcept {

@@ -2,6 +2,7 @@ import React, {RefObject, useContext, useEffect, useId, useRef, useState} from "
 import {UIContext} from "./App.tsx";
 import "../css/Lobby.css";
 import {invoke} from "@tauri-apps/api/core";
+import {packet_manager, PacketManager} from "./packet.ts";
 
 enum PlayerRole {
     MEMBER = 0,
@@ -176,6 +177,15 @@ export default function Lobby() {
                     break;
                 }
                 case "room_start": {
+                    const error =
+                        packet_manager.set(msg.session_id, msg.player_id, Uint8Array.from(msg.key));
+                    if (error) {
+                        alert("Internal server error: " + error);
+                        break;
+                    }
+                    const packet = new ArrayBuffer(PacketManager.align(8));
+                    new DataView(packet).setUint32(0, 1);
+                    packet_manager.send(new Uint8Array(packet));
                     setUI(null);
                     break;
                 }

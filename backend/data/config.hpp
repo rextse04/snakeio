@@ -41,12 +41,13 @@ namespace snakeio {
         control_plane_int_port = 50001,
         data_plane_int_port = 50002,
         data_plane_ext_port = 50003;
-    constexpr size_t data_packet_align = 64;
+    constexpr size_t data_packet_align = 16;
     constexpr size_t align(size_t text_size) noexcept {
         return data_packet_align * (text_size / data_packet_align + (text_size % data_packet_align != 0));
     }
     constexpr size_t in_packet_max_text_size = align(8),
         delta_packet_max_text_size = align(24 * game_max_players + 4 + 12 * game_max_food + 4 + 8 * game_max_food),
         snapshot_packet_max_text_size = align(4 + 4 + 4 + game_max_players * (24 + 8 * snake_max_length) + 4 + 12 * game_max_food),
-        lobby_status_max_text_size = align(game_max_players);
+        lobby_status_max_text_size = align(game_max_players),
+        termination_max_text_size = align(24 * game_max_players);
 }
