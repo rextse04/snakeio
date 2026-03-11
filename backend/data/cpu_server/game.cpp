@@ -14,6 +14,12 @@
 
 using namespace snakeio;
 
+constexpr void game::impl::session::add_segment(snake& snake) noexcept {
+    const vector2d seg_pos = snake.segments_view().back() +
+        (snake.segments_view().back() - snake.segments_view()[snake.basic.length - 2]);
+    add_segment(snake, seg_pos);
+}
+
 game::game() : memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
     new(memory_.get()) impl;
 }
@@ -28,6 +34,7 @@ std::expected<id_t, game::add_session_error> game::add_session(
     }
     impl::session& session = impl_.sessions[*session_id];
     session.players = human_players + ai_players;
+    session.human_players = human_players;
     if (session.players > game_max_players) [[unlikely]] {
         return std::unexpected(too_many_players);
     }
@@ -39,28 +46,33 @@ std::expected<id_t, game::add_session_error> game::add_session(
     std::uniform_real_distribution<scalar_t> width_dist(0, session.width), height_dist(0, session.height);
     for (id_t i = 0; i < session.players; ++i) {
         // sync not needed here because session is still inactive
-        impl::client& client = impl_.clients[*session_id][i];
-        client.key = keys[i];
-        client.last_packet.tick = -1;
+        if (i < human_players) {
+            impl::client& client = impl_.clients[*session_id][i];
+            client.key = keys[i];
+            client.last_packet.tick = -1;
+        }
         snake& s = session.snakes[i];
         s.basic = {
             .speed = snake_init_speed,
             .angle = angle_dist(rng_),
             .width = snake_init_width,
-            .length = snake_init_length,
+            .length = 0,
             .score = 0,
             .alive = true,
             .human = i < human_players
         };
-        s.segments[0] = {width_dist(rng_), height_dist(rng_)};
-        for (size_t seg = 1; seg < s.basic.length; ++seg) {
-            s.segments[seg] = s.segments[seg-1] +
-                vector2d{std::cos(s.basic.angle) * s.basic.width, std::sin(s.basic.angle) * s.basic.width};
+        session.add_segment(s, {width_dist(rng_), height_dist(rng_)});
+        session.add_segment(s, s.segments_view()[0] - vector2d{
+            std::cos(s.basic.angle) * s.basic.width * snake_displacement_factor,
+            std::sin(s.basic.angle) * s.basic.width * snake_displacement_factor
+        });
+        while (s.basic.length < snake_init_length) {
+             session.add_segment(s);
         }
     }
     std::uniform_real_distribution<scalar_t> food_width_dist(food_min_width, food_max_width);
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
-        session.food_set.insert({.pos = {width_dist(rng_), height_dist(rng_)}, .width = food_width_dist(rng_)});
+        session.food_set.emplace(vector2d{width_dist(rng_), height_dist(rng_)}, food_width_dist(rng_));
     }
     sm_.activate(*session_id);
     return *session_id;
@@ -123,27 +135,28 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
         packet.decrypt(client.key);
         std::atomic_ref(client.last_packet).store({
             .addr = client_addr,
-            .tick = std::atomic_ref(session.tick).load(std::memory_order::acquire),
+            .tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed),
             .snapshot_requested = static_cast<bool>(load_32(packet.text().subspan<0, 4>())),
             .angle = load_float32(packet.text().subspan<4, 4>())
         }, std::memory_order::release);
     }
 }
 
-void game::impl::erase_snake(game& game, const session& session,
+void game::impl::erase_snake(game& game, session& session,
     snake& snake, size_t& erase_count, out_delta& delta) noexcept {
     snake.basic.alive = false;
     for (const vector2d& seg : snake.segments_view()) {
         if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
         if (std::bernoulli_distribution(seg_to_food_prob)(game.rng_)) {
-            delta.foods_added[delta.foods_added_size++] = {
+            session.food_set.insert(delta.foods_added[delta.foods_added_size++] = {
                 .pos = seg,
                 .width = seg_to_food_width
-            };
+            });
         }
     }
     std::ranges::fill(snake.segments_view(), decltype(session::snakes_set)::erase_key);
     erase_count += snake.basic.length;
+    snake.basic.length = 0;
 }
 
 static void store_snake_basic(std::span<std::byte, 24> out, const snake_basic& basic) noexcept {
@@ -175,6 +188,8 @@ static void store_food(std::span<std::byte, 12> out, const food& food) noexcept 
 
 snakeio::size_t game::impl::store_delta(std::byte* const out, const session& session, out_delta& delta) noexcept {
     std::byte* it = out;
+    store_32(std::span<std::byte, 4>(it, 4), 0);
+    it += 4;
     for (const snake& snake : session.snakes_view()) {
         store_snake_basic(std::span<std::byte, 24>(it, 24), snake.basic);
         it += 24;
@@ -201,14 +216,16 @@ snakeio::size_t game::impl::store_delta(std::byte* const out, const session& ses
 
 snakeio::size_t game::impl::store_snapshot(std::byte* const out, tick_t tick, const session& session) noexcept {
     std::byte* it = out;
-    store_float32(std::span<std::byte, 4>(it, 4), session.width);
-    store_float32(std::span<std::byte, 4>(it + 4, 4), session.height);
-    store_32(std::span<std::byte, 4>(it + 8, 4), tick);
-    it += 12;
+    store_32(std::span<std::byte, 4>(it, 4), 1);
+    store_float32(std::span<std::byte, 4>(it + 4, 4), session.width);
+    store_float32(std::span<std::byte, 4>(it + 8, 4), session.height);
+    store_32(std::span<std::byte, 4>(it + 12, 4), tick);
+    it += 16;
     for (const snake& snake : session.snakes_view()) {
         it = store_snake(it, snake);
     }
     store_32(std::span<std::byte, 4>(it, 4), session.food_set.size());
+    it += 4;
     for (const food& food : session.food_set) {
         store_food(std::span<std::byte, 12>(it, 12), food);
         it += 12;
@@ -220,11 +237,26 @@ snakeio::size_t game::impl::store_snapshot(std::byte* const out, tick_t tick, co
 
 snakeio::size_t game::impl::store_lobby_status(std::byte* out, tick_t tick,
     const std::array<in_packet, game_max_players>& in_packets, const session& session) noexcept {
+    std::byte* it = out;
+    store_32(std::span<std::byte, 4>(it, 4), 2);
+    it += 4;
     for (id_t i = 0; i < session.players; ++i) {
-        out[i] = static_cast<std::byte>(in_packets[i].tick == tick);
+        *(it++) = static_cast<std::byte>(in_packets[i].tick == tick);
     }
-    const size_t size = align(session.players);
-    std::ranges::fill(out + session.players, out + size, std::byte(0));
+    const size_t size = align(it - out);
+    std::ranges::fill(it, out + size, std::byte(0));
+    return size;
+}
+
+snakeio::size_t game::impl::store_termination(std::byte* out, const session& session) noexcept {
+    std::byte* it = out;
+    store_32(std::span<std::byte, 4>(it, 4), 3);
+    it += 4;
+    for (const snake& snake : session.snakes_view()) {
+        it = store_snake(it, snake);
+    }
+    const size_t size = align(it - out);
+    std::ranges::fill(it, out + size, std::byte(0));
     return size;
 }
 
@@ -238,37 +270,47 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
         for (id_t i = 0; i < game_max_sessions; ++i) {
             if (!game.sm_[i]) continue;
             session& session = impl_.sessions[i];
-            const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::acquire);
+            const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed);
             std::array<in_packet, game_max_players> in_packets;
-            for (id_t j = 0; j < session.players; ++j) {
+            for (id_t j = 0; j < session.human_players; ++j) {
                 in_packets[j] = std::atomic_ref(impl_.clients[i][j].last_packet).load(std::memory_order::acquire);
+            }
+            for (id_t j = session.human_players; j < session.players; ++j) {
+                /* TODO: implement AI snake logic */
             }
             std::byte delta_text[delta_packet_max_text_size];
             size_t delta_text_size;
             std::byte snapshot_text[snapshot_packet_max_text_size];
             size_t snapshot_text_size;
+            const auto send_packet = [&](data_packet& packet, id_t player_id) {
+                const in_packet& in_packet = in_packets[player_id];
+                packet.session_id(i);
+                packet.player_id(player_id);
+                packet.sender(data_packet::sender_t::server);
+                store_32(packet.nonce_part(), tick);
+                packet.encrypt(impl_.clients[i][player_id].key);
+                sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
+                    reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
+            };
             if (tick == 0) [[unlikely]] {
-                if (std::ranges::all_of(in_packets, [tick](const in_packet& packet) { return packet.tick == tick; })) {
+                if (std::ranges::all_of(in_packets.begin(), in_packets.begin() + session.players,
+                    [](const in_packet& packet) { return packet.tick == 0; })) {
                     snapshot_text_size = store_snapshot(snapshot_text, tick, session);
+                    for (id_t j = 0; j < session.players; ++j) {
+                        in_packets[j].snapshot_requested = true;
+                    }
                 } else {
                     std::byte lobby_status_text[lobby_status_max_text_size];
                     const size_t lobby_status_text_size =
                         store_lobby_status(lobby_status_text, tick, in_packets, session);
-                    for (id_t j = 0; j < session.players; ++j) {
+                    for (id_t j = 0; j < session.human_players; ++j) {
                         const in_packet& in_packet = in_packets[j];
                         if (in_packet.tick != tick) continue;
                         std::byte buffer[lobby_status_max_text_size + data_packet::header_size];
                         data_packet packet(buffer, lobby_status_text_size + data_packet::header_size);
-                        packet.session_id(i);
-                        packet.player_id(j);
-                        packet.sender(data_packet::sender_t::server);
-                        store_32(packet.nonce_part(), tick);
                         std::ranges::copy_n(lobby_status_text, lobby_status_text_size, packet.text().begin());
-                        packet.encrypt(impl_.clients[i][j].key);
-                        sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
-                            reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
+                        send_packet(packet, j);
                     }
-                    std::atomic_ref(session.tick).store(1, std::memory_order::release);
                     continue;
                 }
             } else {
@@ -278,34 +320,34 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 snapshot_requested = false;
                 for (id_t j = 0; j < session.players; ++j) {
                     const in_packet& in_packet = in_packets[j];
-                    if (in_packet.tick != tick) goto next_session;
-                    snapshot_requested |= in_packet.snapshot_requested;
+                    if (in_packet.tick != tick) continue;
+                    snapshot_requested = snapshot_requested || in_packet.snapshot_requested;
                     session.snakes[j].basic.angle = in_packet.angle;
                 }
                 // Move snakes
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
-                    std::ranges::copy_backward(snake.segments_view(), snake.segments.begin() + snake.basic.length + 1);
+                    std::shift_right(snake.segments_view().begin(), snake.segments_view().end(), 1);
                     snake.segments[0] += {
                         std::cos(snake.basic.angle) * snake.basic.speed,
                         std::sin(snake.basic.angle) * snake.basic.speed
                     };
-                    if (snake.basic.length >= snake_max_length) {
-                        session.snakes_set.emplace(&snake, &snake.segments[snake.basic.length]);
-                        ++snake.basic.length;
-                    }
                 }
                 // Detect collision with wall or other snakes
                 session.snakes_set.refresh();
                 size_t erase_count = 0;
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
-                    vector2d head = snake.segments[0];
-                    if (head[0] < 0 || head[0] >= session.width || head[1] < 0 || head[1] >= session.height) {
+                    const vector2d head = snake.segments[0];
+                    if (head[0] < 0 || head[0] > session.width || head[1] < 0 || head[1] > session.height) {
                         erase_snake(game, session, snake, erase_count, delta);
                         continue;
                     }
-                    for (const auto [other_snake, seg] : session.snakes_set.find(head, snake_max_width * 2)) {
+                    for (const auto [other_snake, seg] : session.snakes_set.find(head, snake_max_width)) {
+                        if (other_snake == &snake) {
+                            const size_t seg_idx = seg - snake.segments.data();
+                            if (seg_idx < 1 / snake_displacement_factor) [[likely]] continue;
+                        }
                         erase_snake(game, session, snake, erase_count, delta);
                         if (seg == other_snake->segments.data()) {
                             erase_snake(game, session, *other_snake, erase_count, delta);
@@ -318,21 +360,18 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
                     for (food& food : session.food_set.find(snake.segments[0], snake_max_width)) {
-                        const size_t growth = std::min<size_t>(food.width, snake_max_length - snake.basic.length);
-                        for (size_t j = 0; j < growth; ++j) {
-                            snake.segments[snake.basic.length + j] = snake.segments[snake.basic.length + j-1] + vector2d{
-                                std::cos(snake.basic.angle) * snake.basic.speed,
-                                std::sin(snake.basic.angle) * snake.basic.speed
-                            };
+                        snake.basic.score += static_cast<score_t>(food.width);
+                        const size_t new_length = std::min<size_t>(snake.basic.length + food.width, snake_max_length);
+                        while (snake.basic.length < new_length) {
+                            session.add_segment(snake);
                         }
-                        snake.basic.length += growth;
                         delta.foods_removed[delta.foods_removed_size++] = food.pos;
                         food.pos = session.food_set.erase_key;
                     }
                 }
                 // Add food
-                const size_t food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
-                    food_per_player_tick * session.players);
+                const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
+                    std::poisson_distribution<size_t>(food_per_player_tick * session.players)(game.rng_));
                 for (size_t j = 0; j < food_added; ++j) {
                     delta.foods_added[delta.foods_added_size++] = {
                         .pos = {
@@ -350,50 +389,37 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 if (snapshot_requested) {
                     snapshot_text_size = store_snapshot(snapshot_text, tick, session);
                 }
-                std::atomic_ref(session.tick).store(tick + 1, std::memory_order::release);
             }
             // Send packets
-            for (id_t j = 0; j < session.players; ++j) {
+            for (id_t j = 0; j < session.human_players; ++j) {
                 const in_packet& in_packet = in_packets[j];
-                const bool snapshot_requested = in_packet.snapshot_requested;
+                const bool snapshot_requested = in_packet.tick == tick && in_packet.snapshot_requested;
                 std::byte buffer[std::max(delta_packet_max_text_size, snapshot_packet_max_text_size) +
                     data_packet::header_size];
-                data_packet packet(buffer, snapshot_requested ?
-                     snapshot_text_size + data_packet::header_size :
-                     delta_text_size + data_packet::header_size);
-                packet.session_id(i);
-                packet.player_id(j);
-                packet.sender(data_packet::sender_t::server);
-                store_32(packet.nonce_part(), tick);
-                const std::byte* text = snapshot_requested ? snapshot_text : delta_text;
-                std::ranges::copy_n(text, snapshot_requested ? snapshot_text_size : delta_text_size,
-                    packet.text().begin());
-                packet.encrypt(impl_.clients[i][j].key);
-                sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
-                    reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
+                data_packet packet(buffer, snapshot_requested
+                    ? (snapshot_text_size + data_packet::header_size)
+                    : (delta_text_size + data_packet::header_size));
+                const std::span<std::byte> text = snapshot_requested
+                    ? std::span(snapshot_text, snapshot_text_size)
+                    : std::span(delta_text, delta_text_size);
+                std::ranges::copy(text, packet.text().begin());
+                send_packet(packet, j);
             }
-            // Increment tick
+            // Check for game end
             if (tick >= session.max_tick) {
                 game.sm_.deallocate(i);
                 std::byte termination_text[termination_max_text_size];
-                for (id_t j = 0; j < session.players; ++j) {
-                    store_snake_basic(std::span<std::byte, 24>(termination_text + j * 24, 24), session.snakes[j].basic);
+                const size_t termination_text_size = store_termination(termination_text, session);
+                for (id_t j = 0; j < session.human_players; ++j) {
+                    std::byte buffer[termination_max_text_size + data_packet::header_size];
+                    data_packet packet(buffer, sizeof(buffer));
+                    std::ranges::copy_n(termination_text, termination_text_size, packet.text().begin());
+                    send_packet(packet, j);
                 }
-                std::byte buffer[termination_max_text_size + data_packet::header_size];
-                data_packet packet(buffer, sizeof(buffer));
-                for (id_t j = 0; j < session.players; ++j) {
-                    const in_packet& in_packet = in_packets[j];
-                    packet.session_id(i);
-                    packet.player_id(j);
-                    packet.sender(data_packet::sender_t::server);
-                    store_32(packet.nonce_part(), session.max_tick + 1);
-                    std::ranges::copy_n(termination_text, termination_max_text_size, packet.text().begin());
-                    packet.encrypt(impl_.clients[i][j].key);
-                    sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
-                        reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
-                }
+                continue;
             }
-            next_session:
+            // Increment tick
+            (void) std::atomic_ref(session.tick).fetch_add(1, std::memory_order::relaxed);
         }
     }
 }

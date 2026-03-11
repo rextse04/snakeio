@@ -1,0 +1,17 @@
+.game > canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+.game > canvas.hex {
+    background-color: black;
+    z-index: 1;
+}
+.game > canvas.food {
+    background-color: transparent;
+    z-index: 2;
+}
+.game > canvas.snake {
+    background-color: transparent;
+    z-index: 3;
+}

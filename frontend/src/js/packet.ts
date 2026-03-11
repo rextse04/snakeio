@@ -51,19 +51,21 @@ export class PacketManager {
         this.#counter++;
         return invoke("send_packet", packet);
     }
-    onrecv(handler: (data: Uint8Array) => void) {
+    onrecv(handler: (tick: number, data: Uint8Array) => void) {
         return listen("recv_packet", (event) => {
             const packet = new Uint8Array(event.payload as ArrayBuffer);
-            handler(sodium.crypto_aead_chacha20poly1305_ietf_decrypt_detached(
+            const tick = new DataView(packet.buffer, 12, 4)
+                .getUint32(0, true);
+            const decrypted = sodium.crypto_aead_chacha20poly1305_ietf_decrypt_detached(
                 null,
                 packet.subarray(16, packet.length - 16),
                 packet.subarray(packet.length - 16, packet.length),
                 packet.subarray(0, 16),
                 packet.subarray(4, 16),
-                this.#key));
+                this.#key);
+            handler(tick, decrypted);
         });
     }
 }
 
 export const packet_manager = new PacketManager();
-packet_manager.onrecv(data => console.log(data));

@@ -84,7 +84,6 @@ wss.on("connection", (ws: PlayerSocket) => {
             }));
             return;
         }
-        console.debug(msg);
         switch (msg.type) {
             case "register": {
                 ws.info!.username = msg.username;
@@ -245,6 +244,7 @@ wss.on("connection", (ws: PlayerSocket) => {
                                 player.info.ws.send(JSON.stringify({
                                     type: "room_start",
                                     session_id: session_id,
+                                    player_id: i,
                                     key: buffer.subarray(i * KEY_LEN, (i+1) * KEY_LEN).toJSON().data
                                 }));
                             }

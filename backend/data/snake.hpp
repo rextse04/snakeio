@@ -15,7 +15,7 @@ namespace snakeio {
     };
     struct snake {
         snake_basic basic;
-        std::array<vector2d, snake_max_length + 1> segments;
+        std::array<vector2d, snake_max_length> segments;
 
         constexpr auto segments_view(this auto&& self) noexcept {
             return std::span(self.segments.begin(), self.basic.length);

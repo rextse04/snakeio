@@ -103,14 +103,14 @@ Size = 8
 Max size = 41352 (~41KB)
 
 ### snapshot
-| Field      | Type      | Size            | Description              |
-|------------|-----------|-----------------|--------------------------|
-| width      | float     | 4               | World width.             |
-| height     | float     | 4               | World height.            |
-| max_tick   | unsigned  | 4               | Termination tick number. |
-| snakes     | snake[]   | 8216 * players  | See below.               |
-| foods_size | unsigned  | 4               | Number of foods.         |
-| foods      | food[]    | 12 * foods_size | See below.               |
+| Field      | Type      | Size               | Description              |
+|------------|-----------|--------------------|--------------------------|
+| width      | float     | 4                  | World width.             |
+| height     | float     | 4                  | World height.            |
+| max_tick   | unsigned  | 4                  | Termination tick number. |
+| snakes     | snake[]   | variable * players | See below.               |
+| foods_size | unsigned  | 4                  | Number of foods.         |
+| foods      | food[]    | 12 * foods_size    | See below.               |
 Max size = 156048 (~154KB)
 
 ### lobby_status

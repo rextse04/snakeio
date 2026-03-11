@@ -10,11 +10,20 @@
 #include <functional>
 #include <concepts>
 #include <limits>
+#include <cmath>
 
 namespace snakeio::cpu {
-    template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d, auto GetPos = std::identity{}>
-    requires requires(Node node) {
+    // GetPos(const Node& node) -> vector2d.
+    // SetPos(Node& node, const vector2d& value):
+    // - It is guaranteed that value's lifetime spans at least that of node.
+    // - It is guaranteed that setPos will not be used on valid nodes.
+    // - Semantic requirement: SetPos(node, value) => GetPos(node) == value.
+    template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
+        auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& value) { node = value; }>
+    requires requires(const Node& node, Node& m_node, const vector2d& value) {
+        requires std::default_initializable<Node>;
         { GetPos(node) } -> std::convertible_to<vector2d>;
+        { SetPos(m_node, value) };
     }
     class spatial_set {
     public:
@@ -73,9 +82,7 @@ namespace snakeio::cpu {
             constexpr basic_find_iterator& operator++() noexcept {
                 const key_type& pos = GetPos(*++current_);
                 if (column_id(pos) >= column_end_) {
-                    const size_type next_cell = cell_id(row_id(pos) + 1, column_begin_);
-                    current_ = std::ranges::lower_bound(current_, base->nodes_.data() + base->size_, next_cell, {},
-                        [](const value_type& node) { return cell_id(GetPos(node)); });
+                    current_ = base->find_begin(cell_id(row_id(pos) + 1, column_begin_));
                 }
                 return *this;
             }
@@ -90,10 +97,14 @@ namespace snakeio::cpu {
         };
     private:
         size_type size_ = 0;
-        std::array<value_type, ObjsSize> nodes_;
+        std::array<value_type, ObjsSize + 1> nodes_;
 
-        constexpr auto span_(this auto&& self) noexcept {
+        constexpr auto span(this auto&& self) noexcept {
             return std::span{self.nodes_.data(), self.size_};
+        }
+        constexpr auto find_begin(this auto&& self, size_type cell_id) noexcept {
+            return std::ranges::lower_bound(self.nodes_.data(), self.nodes_.data() + self.size_, cell_id, {},
+                [](const value_type& node) { return spatial_set::cell_id(GetPos(node)); });
         }
     public:
         constexpr spatial_set() noexcept = default;
@@ -107,16 +118,16 @@ namespace snakeio::cpu {
             refresh();
         }
         constexpr auto begin(this auto&& self) noexcept {
-            return self.span_().begin();
+            return self.span().begin();
         }
         constexpr auto end(this auto&& self) noexcept {
-            return self.span_().end();
+            return self.span().end();
         }
         constexpr auto rbegin(this auto&& self) noexcept {
-            return self.span_().rbegin();
+            return self.span().rbegin();
         }
         constexpr auto rend(this auto&& self) noexcept {
-            return self.span_().rend();
+            return self.span().rend();
         }
         constexpr bool empty() const noexcept { return size() == 0; }
         constexpr size_type size() const noexcept { return size_; }
@@ -124,15 +135,17 @@ namespace snakeio::cpu {
         constexpr void clear() noexcept { size_ = 0; }
         // Erases n elements at the back.
         // Common use case: set n deleted nodes to erase_key, refresh(), then erase(n).
-        constexpr void erase(size_type n) noexcept { size_ -= n; }
+        constexpr void erase(size_type n) noexcept {
+            SetPos(nodes_[size_ -= n], erase_key);
+        }
         constexpr void insert(const value_type& node) noexcept {
             nodes_[size_++] = node;
         }
         template <utils::container_compatible_range<value_type> R>
         constexpr void insert(R&& nodes) noexcept {
             if constexpr (std::ranges::sized_range<R>) {
-                size_ += std::ranges::size(nodes);
                 std::ranges::copy(nodes, nodes_.begin() + size_);
+                size_ += std::ranges::size(nodes);
             } else {
                 for (const value_type& seg : nodes) insert(seg);
             }
@@ -150,8 +163,9 @@ namespace snakeio::cpu {
             std::ranges::sort(nodes_.begin(), nodes_.begin() + size_, {}, [](const value_type& node) {
                 return cell_id(GetPos(node));
             });
+            SetPos(nodes_[size_], erase_key);
         }
-        // Erroneous output if any node is inserted or if GetPos(node) is changed for any existing node
+        // UB if any node is inserted or if GetPos(node) is changed for any existing node
         // after the last call to refresh.
         // UB if key is outside game window.
         template <typename Self>
@@ -160,12 +174,12 @@ namespace snakeio::cpu {
                 static_cast<size_type>(radius / cell_length) + (std::fmod(radius, cell_length) > 0);
             const size_type center_row = row_id(key);
             const size_type center_column = column_id(key);
-            const size_type row_begin = std::max<size_type>(0, center_row - cell_radius);
-            const size_type column_begin = std::max<size_type>(0, center_column - cell_radius);
+            const size_type row_begin = (center_row > cell_radius) ? (center_row - cell_radius) : 0;
+            const size_type column_begin = (center_column > cell_radius) ? (center_column - cell_radius) : 0;
             return std::ranges::subrange(basic_find_iterator(&self,
                 row_begin, std::min<size_type>(rows, center_row + cell_radius + 1),
                 column_begin, std::min<size_type>(columns, center_column + cell_radius + 1),
-                self.nodes_.data() + cell_id(row_begin, column_begin)
+                self.find_begin(cell_id(row_begin, column_begin))
             ), std::default_sentinel)
             | std::views::filter([key, radius](const value_type& t) {
                 auto d = static_cast<vector2d>(GetPos(t)) - key;

@@ -52,7 +52,6 @@ class ControlPort {
         }
         const promise = new Promise<number>((res, rej) => {
             this.#callbacks[1]!.set(token, (buffer: Buffer) => {
-                console.debug(buffer);
                 switch (buffer.readUInt8(6)) {
                     case 0: {
                         res(buffer.readUInt32LE(8));

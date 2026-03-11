@@ -1,12 +1,17 @@
 set(BOOST_USE_STATIC_LIBS OFF)
-find_package(Boost REQUIRED COMPONENTS unit_test_framework)
-include_directories(${Boost_INCLUDE_DIRS})
 
-file(GLOB_RECURSE TEST_FILES ${CMAKE_CURRENT_LIST_DIR}/*.cpp)
-foreach (TEST_FILE ${TEST_FILES})
-    file(RELATIVE_PATH REL_PATH ${CMAKE_CURRENT_LIST_DIR} ${TEST_FILE})
-    string(REPLACE "/" "_" TEST_NAME ${REL_PATH})
-    string(REPLACE ".cpp" "_test" TEST_NAME ${TEST_NAME})
-    add_executable(${TEST_NAME} ${TEST_FILE})
-    target_link_libraries(${TEST_NAME} ${Boost_LIBRARIES})
-endforeach ()
+function (register_test)
+    foreach (test_name IN LISTS ARGN)
+        cmake_path(GET CMAKE_CURRENT_LIST_DIR FILENAME SERVER_NAME)
+        set(TEST_NAME ${SERVER_NAME}_${test_name}_test)
+        add_executable(${TEST_NAME}
+                ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/${test_name}.cpp)
+        target_link_libraries(${TEST_NAME} PRIVATE
+                ${SERVER_NAME}_test_lib
+                Boost::unit_test_framework
+        )
+        target_compile_definitions(${TEST_NAME} PRIVATE
+                SNAKEIO_TEST_CRYPT_PY=\"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/crypt.py\"
+        )
+    endforeach ()
+endfunction()

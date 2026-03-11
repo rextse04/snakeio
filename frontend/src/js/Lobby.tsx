@@ -1,26 +1,9 @@
 import React, {RefObject, useContext, useEffect, useId, useRef, useState} from "react";
-import {UIContext} from "./App.tsx";
+import {UIContext, PlayerRole, Player, LobbyRoom, GameContext} from "./App.tsx";
 import "../css/Lobby.css";
 import {invoke} from "@tauri-apps/api/core";
 import {packet_manager, PacketManager} from "./packet.ts";
-
-enum PlayerRole {
-    MEMBER = 0,
-    AI = 0.5,
-    ADMIN = 1,
-    OWNER = 2
-}
-type Player = {
-    server_id: number;
-    username: string;
-    role?: PlayerRole;
-};
-type LobbyRoom = {
-    token: string;
-    players: Array<Player>;
-    is_public?: boolean;
-    ai_players?: number;
-};
+import Game from "./Game.tsx";
 
 function role_name(role: PlayerRole) {
     switch (role) {
@@ -83,7 +66,8 @@ function LobbyPlayer({wsRef, room, user, player}:
     </div>;
 }
 export default function Lobby() {
-    const [UI, setUI] = useContext(UIContext);
+    const [, setGame] = useContext(GameContext);
+    const [, setUI] = useContext(UIContext);
     const [player, setPlayer] = useState({
         server_id: -1,
         username: ""
@@ -92,6 +76,7 @@ export default function Lobby() {
         token: "",
         players: []
     } as LobbyRoom);
+    const roomRef = useRef(room);
     const wsRef = useRef(undefined as WebSocket | undefined);
     const connect = () => {
         const ws = new WebSocket("ws://localhost:50000");
@@ -150,26 +135,33 @@ export default function Lobby() {
                     break;
                 }
                 case "room_kick": {
-                    if (msg.server_id === player.server_id) {
-                        setRoom({token: "", players: []});
-                    } else {
-                        setRoom(room => ({
-                            ...room,
-                            players: room.players.filter(player => player.server_id !== msg.server_id)
-                        }));
-                    }
+                    setPlayer(player => {
+                        if (msg.server_id === player.server_id) {
+                            setRoom({token: "", players: []});
+                        } else {
+                            setRoom(room => ({
+                                ...room,
+                                players: room.players.filter(player => player.server_id !== msg.server_id)
+                            }));
+                        }
+                        return player;
+                    });
                     break;
                 }
                 case "room_change_role": {
-                    if (msg.server_id === player.server_id) {
-                        setPlayer(player => ({...player, role: msg.role}));
-                    }
-                    const teammate =
-                        room.players.find(player => player.server_id === msg.server_id);
-                    if (teammate) {
-                        teammate.role = msg.role;
-                        setRoom(room => ({...room}));
-                    }
+                    setPlayer(player => {
+                        if (msg.server_id === player.server_id) {
+                            return {...player, role: msg.role};
+                        } else {
+                            const teammate =
+                                room.players.find(player => player.server_id === msg.server_id);
+                            if (teammate) {
+                                teammate.role = msg.role;
+                                setRoom(room => ({...room}));
+                            }
+                            return player;
+                        }
+                    });
                     break;
                 }
                 case "room_set": {
@@ -183,10 +175,8 @@ export default function Lobby() {
                         alert("Internal server error: " + error);
                         break;
                     }
-                    const packet = new ArrayBuffer(PacketManager.align(8));
-                    new DataView(packet).setUint32(0, 1);
-                    packet_manager.send(new Uint8Array(packet));
-                    setUI(null);
+                    setUI(undefined);
+                    setGame(<Game room={roomRef.current!} />);
                     break;
                 }
             }
@@ -240,6 +230,7 @@ export default function Lobby() {
         }));
     };
     const onStart = () => {
+        roomRef.current = room;
         wsRef.current?.send(JSON.stringify({
             type: "room_start"
         }));
