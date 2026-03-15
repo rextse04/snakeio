@@ -3,27 +3,6 @@ import "../css/App.css";
 import "../css/ui.css";
 import Lobby from "./Lobby.tsx";
 
-export enum PlayerRole {
-    MEMBER = 0,
-    AI = 0.5,
-    ADMIN = 1,
-    OWNER = 2
-}
-export type Player = {
-    server_id: number;
-    username: string;
-    role?: PlayerRole;
-};
-export type LobbyRoom = {
-    token: string;
-    players: Array<Player>;
-    is_public?: boolean;
-    ai_players?: number;
-};
-export function all_players(room: LobbyRoom) {
-    return room.players.length + (room.ai_players || 0);
-}
-
 function useElement(element: JSX.Element | undefined) {
     return useState(element);
 }

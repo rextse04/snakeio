@@ -41,18 +41,30 @@ namespace snakeio {
         constexpr void player_id(id_t id) noexcept {
             store_32(subspan<4, 4>(), id);
         }
-        enum class sender_t : std::uint_least32_t {client, server};
+        enum class sender_t : unsigned char {client, server};
         constexpr sender_t sender() const noexcept {
-            return static_cast<sender_t>(load_32(subspan<8, 4>()));
+            return static_cast<sender_t>((*this)[8]);
         }
         constexpr void sender(sender_t sender) noexcept {
-            store_32(subspan<8, 4>(), static_cast<std::uint_least32_t>(sender));
+            (*this)[8] = static_cast<std::byte>(sender);
+        }
+        constexpr std::uint_least8_t total_chunks() const noexcept {
+            return static_cast<std::uint_least8_t>((*this)[9]);
+        }
+        constexpr void total_chunks(std::uint_least8_t total_chunks) noexcept {
+            (*this)[9] = static_cast<std::byte>(total_chunks);
+        }
+        constexpr std::uint_least8_t chunk_id() const noexcept {
+            return static_cast<std::uint_least8_t>((*this)[10]);
+        }
+        constexpr void chunk_id(std::uint_least16_t chunk_id) noexcept {
+            (*this)[10] = static_cast<std::byte>(chunk_id);
         }
         constexpr auto nonce_part(this auto&& self) noexcept {
-            return self.bytes().template subspan<12, 4>();
+            return self.template subspan<12, 4>();
         }
         constexpr auto nonce(this auto&& self) noexcept {
-            return self.bytes().template subspan<4, nonce_view::extent>();
+            return self.template subspan<4, nonce_view::extent>();
         }
         constexpr auto text(this auto&& self) noexcept {
             return std::span(self.bytes().begin() + aad_size, self.bytes().end() - tag_view::extent);

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <thread>
+#include <ranges>
 
 using namespace snakeio;
 
@@ -40,8 +41,8 @@ std::expected<id_t, game::add_session_error> game::add_session(
     }
     session.tick = 0;
     session.max_tick = game_max_tick;
-    session.width = game_width_psqp * std::sqrt(session.players);
-    session.height = game_height_psqp * std::sqrt(session.players);
+    session.width = game_width_psqp * std::sqrt(static_cast<scalar_t>(session.players));
+    session.height = game_height_psqp * std::sqrt(static_cast<scalar_t>(session.players));
     std::uniform_real_distribution<scalar_t> angle_dist(0, M_PI * 2);
     std::uniform_real_distribution<scalar_t> width_dist(0, session.width), height_dist(0, session.height);
     for (id_t i = 0; i < session.players; ++i) {
@@ -49,7 +50,7 @@ std::expected<id_t, game::add_session_error> game::add_session(
         if (i < human_players) {
             impl::client& client = impl_.clients[*session_id][i];
             client.key = keys[i];
-            client.last_packet.tick = -1;
+            client.tick = -1;
         }
         snake& s = session.snakes[i];
         s.basic = {
@@ -63,17 +64,22 @@ std::expected<id_t, game::add_session_error> game::add_session(
         };
         session.add_segment(s, {width_dist(rng_), height_dist(rng_)});
         session.add_segment(s, s.segments_view()[0] - vector2d{
-            std::cos(s.basic.angle) * s.basic.width * snake_displacement_factor,
-            std::sin(s.basic.angle) * s.basic.width * snake_displacement_factor
+            std::cos(s.basic.angle) * s.basic.width * 2 * snake_displacement_factor,
+            std::sin(s.basic.angle) * s.basic.width * 2 * snake_displacement_factor
         });
         while (s.basic.length < snake_init_length) {
              session.add_segment(s);
         }
     }
-    std::uniform_real_distribution<scalar_t> food_width_dist(food_min_width, food_max_width);
+    std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
-        session.food_set.emplace(vector2d{width_dist(rng_), height_dist(rng_)}, food_width_dist(rng_));
+        session.food_set.insert({
+            vector2d{width_dist(rng_), height_dist(rng_)},
+            food_width_dist(rng_)
+        });
     }
+    session.snakes_set.refresh();
+    session.food_set.refresh();
     sm_.activate(*session_id);
     return *session_id;
 }
@@ -115,6 +121,9 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
             continue;
         }
         auto& client = impl_.clients[packet.session_id()][packet.player_id()];
+        const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed);
+        if (std::atomic_ref(client.tick).load(std::memory_order::relaxed) == tick)
+            continue;
         switch (packet.verify(client.key)) {
             using enum data_packet::verify_result;
             case ok: break;
@@ -133,30 +142,13 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
             default: std::unreachable();
         }
         packet.decrypt(client.key);
-        std::atomic_ref(client.last_packet).store({
+        client.last_packet = {
             .addr = client_addr,
-            .tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed),
             .snapshot_requested = static_cast<bool>(load_32(packet.text().subspan<0, 4>())),
             .angle = load_float32(packet.text().subspan<4, 4>())
-        }, std::memory_order::release);
+        };
+        std::atomic_ref(client.tick).store(tick, std::memory_order::release);
     }
-}
-
-void game::impl::erase_snake(game& game, session& session,
-    snake& snake, size_t& erase_count, out_delta& delta) noexcept {
-    snake.basic.alive = false;
-    for (const vector2d& seg : snake.segments_view()) {
-        if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
-        if (std::bernoulli_distribution(seg_to_food_prob)(game.rng_)) {
-            session.food_set.insert(delta.foods_added[delta.foods_added_size++] = {
-                .pos = seg,
-                .width = seg_to_food_width
-            });
-        }
-    }
-    std::ranges::fill(snake.segments_view(), decltype(session::snakes_set)::erase_key);
-    erase_count += snake.basic.length;
-    snake.basic.length = 0;
 }
 
 static void store_snake_basic(std::span<std::byte, 24> out, const snake_basic& basic) noexcept {
@@ -214,12 +206,12 @@ snakeio::size_t game::impl::store_delta(std::byte* const out, const session& ses
     return size;
 }
 
-snakeio::size_t game::impl::store_snapshot(std::byte* const out, tick_t tick, const session& session) noexcept {
+snakeio::size_t game::impl::store_snapshot(std::byte* const out, const session& session) noexcept {
     std::byte* it = out;
     store_32(std::span<std::byte, 4>(it, 4), 1);
     store_float32(std::span<std::byte, 4>(it + 4, 4), session.width);
     store_float32(std::span<std::byte, 4>(it + 8, 4), session.height);
-    store_32(std::span<std::byte, 4>(it + 12, 4), tick);
+    store_32(std::span<std::byte, 4>(it + 12, 4), session.max_tick);
     it += 16;
     for (const snake& snake : session.snakes_view()) {
         it = store_snake(it, snake);
@@ -236,12 +228,12 @@ snakeio::size_t game::impl::store_snapshot(std::byte* const out, tick_t tick, co
 }
 
 snakeio::size_t game::impl::store_lobby_status(std::byte* out, tick_t tick,
-    const std::array<in_packet, game_max_players>& in_packets, const session& session) noexcept {
+    std::span<const in_packet_info> in_packets) noexcept {
     std::byte* it = out;
     store_32(std::span<std::byte, 4>(it, 4), 2);
     it += 4;
-    for (id_t i = 0; i < session.players; ++i) {
-        *(it++) = static_cast<std::byte>(in_packets[i].tick == tick);
+    for (const in_packet_info& in_packet : in_packets) {
+        *(it++) = static_cast<std::byte>(in_packet.tick == tick);
     }
     const size_t size = align(it - out);
     std::ranges::fill(it, out + size, std::byte(0));
@@ -261,55 +253,57 @@ snakeio::size_t game::impl::store_termination(std::byte* out, const session& ses
 }
 
 void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
-    clock::time_point last_tick{};
+    clock::time_point next_tick = clock::now();
     while (!stop_token.stop_requested()) {
-        const clock::time_point now = clock::now();
-        if (now - last_tick < game_tick_rate) continue;
-        last_tick = now;
         impl& impl_ = game.get_impl();
         for (id_t i = 0; i < game_max_sessions; ++i) {
             if (!game.sm_[i]) continue;
             session& session = impl_.sessions[i];
             const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed);
-            std::array<in_packet, game_max_players> in_packets;
+            in_packet_info in_packets_buffer[game_max_players];
             for (id_t j = 0; j < session.human_players; ++j) {
-                in_packets[j] = std::atomic_ref(impl_.clients[i][j].last_packet).load(std::memory_order::acquire);
+                const client& client = impl_.clients[i][j];
+                in_packets_buffer[j].tick = std::atomic_ref(client.tick).load(std::memory_order::acquire);
+                if (in_packets_buffer[j].tick != tick) continue;
+                static_cast<in_packet&>(in_packets_buffer[j]) = client.last_packet;
             }
-            for (id_t j = session.human_players; j < session.players; ++j) {
-                /* TODO: implement AI snake logic */
-            }
+            const std::span in_packets(in_packets_buffer, session.human_players);
             std::byte delta_text[delta_packet_max_text_size];
             size_t delta_text_size;
             std::byte snapshot_text[snapshot_packet_max_text_size];
             size_t snapshot_text_size;
-            const auto send_packet = [&](data_packet& packet, id_t player_id) {
-                const in_packet& in_packet = in_packets[player_id];
+            const auto send_packet = [&](id_t player_id, std::span<const std::byte> text) {
+                const client& client = impl_.clients[i][player_id];
+                static std::byte buffer[packet_chunk_size + data_packet::header_size]{};
+                data_packet packet(buffer);
+                const auto chunks = text | std::views::chunk(packet_chunk_size);
                 packet.session_id(i);
                 packet.player_id(player_id);
                 packet.sender(data_packet::sender_t::server);
+                packet.total_chunks(chunks.size());
+                packet.chunk_id(0);
                 store_32(packet.nonce_part(), tick);
-                packet.encrypt(impl_.clients[i][player_id].key);
-                sendto(sock, packet.bytes().data(), packet.bytes().size(), 0,
-                    reinterpret_cast<const sockaddr*>(&in_packet.addr), sizeof(in_packet.addr));
+                for (const auto& chunk : chunks) {
+                    data_packet chunk_packet(buffer, chunk.size() + data_packet::header_size);
+                    std::ranges::copy(chunk, chunk_packet.text().begin());
+                    chunk_packet.encrypt(client.key);
+                    sendto(sock, chunk_packet.bytes(), client.last_packet.addr);
+                    packet.chunk_id(packet.chunk_id() + 1);
+                }
             };
             if (tick == 0) [[unlikely]] {
-                if (std::ranges::all_of(in_packets.begin(), in_packets.begin() + session.players,
-                    [](const in_packet& packet) { return packet.tick == 0; })) {
-                    snapshot_text_size = store_snapshot(snapshot_text, tick, session);
-                    for (id_t j = 0; j < session.players; ++j) {
-                        in_packets[j].snapshot_requested = true;
+                if (std::ranges::all_of(in_packets, [](const in_packet_info& packet) { return packet.tick == 0; })) {
+                    snapshot_text_size = store_snapshot(snapshot_text, session);
+                    for (in_packet& in_packet : in_packets) {
+                        in_packet.snapshot_requested = true;
                     }
                 } else {
                     std::byte lobby_status_text[lobby_status_max_text_size];
                     const size_t lobby_status_text_size =
-                        store_lobby_status(lobby_status_text, tick, in_packets, session);
+                        store_lobby_status(lobby_status_text, tick, in_packets);
                     for (id_t j = 0; j < session.human_players; ++j) {
-                        const in_packet& in_packet = in_packets[j];
-                        if (in_packet.tick != tick) continue;
-                        std::byte buffer[lobby_status_max_text_size + data_packet::header_size];
-                        data_packet packet(buffer, lobby_status_text_size + data_packet::header_size);
-                        std::ranges::copy_n(lobby_status_text, lobby_status_text_size, packet.text().begin());
-                        send_packet(packet, j);
+                        if (in_packets[j].tick != 0) continue;
+                        send_packet(j, std::span(lobby_status_text, lobby_status_text_size));
                     }
                     continue;
                 }
@@ -318,39 +312,90 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 bool snapshot_requested = false;
                 // Processes in_packets
                 snapshot_requested = false;
-                for (id_t j = 0; j < session.players; ++j) {
-                    const in_packet& in_packet = in_packets[j];
+                for (id_t j = 0; j < session.human_players; ++j) {
+                    const in_packet_info& in_packet = in_packets[j];
                     if (in_packet.tick != tick) continue;
                     snapshot_requested = snapshot_requested || in_packet.snapshot_requested;
                     session.snakes[j].basic.angle = in_packet.angle;
+                }
+                // AIs play
+                for (snake& snake : session.ai_snakes_view()) {
+                    const vector2d head = snake.segments[0];
+                    const scalar_t sightrange = snake.basic.speed * 32;
+                    // Forward bias
+                    vector2d force = vector2d{std::cos(snake.basic.angle), std::sin(snake.basic.angle)};
+                    // Food attraction
+                    constexpr scalar_t epsilon = 1./1024;
+                    const auto get_field = [](vector2d d) noexcept {
+                        return d / (d.norm_sq() + epsilon);
+                    };
+                    for (const food& food : session.food_set.find_possible(head, sightrange)) {
+                        force += get_field(food.pos - head) * food.width;
+                    }
+                    // Collision repulsion
+                    const scalar_t danger_mass = snake.basic.speed * 2;
+                    for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, sightrange)) {
+                        force -= get_field(*seg - head) * danger_mass;
+                    }
+                    // Wall repulsion
+                    const scalar_t wall_mass = snake.basic.speed * 10;
+                    const auto get_wall_field = [](scalar_t pos, scalar_t length) noexcept {
+                        const scalar_t dist = length - pos;
+                        return 1 / (pos + epsilon) - 1 / (dist + epsilon);
+                    };
+                    force[0] += wall_mass * get_wall_field(head[0], session.width);
+                    force[1] += wall_mass * get_wall_field(head[1], session.height);
+                    // Convert force to angle
+                    snake.basic.angle = std::atan2(force[1], force[0]);
                 }
                 // Move snakes
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
                     std::shift_right(snake.segments_view().begin(), snake.segments_view().end(), 1);
-                    snake.segments[0] += {
+                    snake.segments.front() += {
                         std::cos(snake.basic.angle) * snake.basic.speed,
                         std::sin(snake.basic.angle) * snake.basic.speed
                     };
                 }
-                // Detect collision with wall or other snakes
                 session.snakes_set.refresh();
+                // Detect collision with wall or other snakes
                 size_t erase_count = 0;
+                const auto erase_snake = [&](snake& snake) {
+                    snake.basic.alive = false;
+                    std::uniform_real_distribution<scalar_t> food_width_dist(seg_food_min_width, seg_food_max_width);
+                    for (const vector2d& seg : snake.segments_view()) {
+                        if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
+                        if (std::bernoulli_distribution(seg_to_food_prob)(game.rng_)) {
+                            delta.foods_added[delta.foods_added_size++] = {
+                                .pos = seg,
+                                .width = food_width_dist(game.rng_)
+                            };
+                        }
+                    }
+                    std::ranges::fill(snake.segments_view(), decltype(session::snakes_set)::erase_key);
+                    erase_count += snake.basic.length;
+                    snake.basic.length = 0;
+                };
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
-                    const vector2d head = snake.segments[0];
+                    const vector2d head = snake.segments.front();
                     if (head[0] < 0 || head[0] > session.width || head[1] < 0 || head[1] > session.height) {
-                        erase_snake(game, session, snake, erase_count, delta);
+                        erase_snake(snake);
                         continue;
                     }
-                    for (const auto [other_snake, seg] : session.snakes_set.find(head, snake_max_width)) {
+                    for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, snake_max_width * 2)) {
+                        const scalar_t req = snake.basic.width + other_snake->basic.width;
+                        if ((*seg - head).norm_sq() > req * req)
+                            continue;
                         if (other_snake == &snake) {
                             const size_t seg_idx = seg - snake.segments.data();
                             if (seg_idx < 1 / snake_displacement_factor) [[likely]] continue;
-                        }
-                        erase_snake(game, session, snake, erase_count, delta);
-                        if (seg == other_snake->segments.data()) {
-                            erase_snake(game, session, *other_snake, erase_count, delta);
+                            erase_snake(snake);
+                        } else {
+                            erase_snake(snake);
+                            if (seg == other_snake->segments.data()) {
+                                erase_snake(*other_snake);
+                            }
                         }
                     }
                 }
@@ -359,7 +404,10 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 // Detect collision with food
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
-                    for (food& food : session.food_set.find(snake.segments[0], snake_max_width)) {
+                    for (food& food : session.food_set.find_possible(snake.segments[0], snake_max_width + food_max_width)) {
+                        const scalar_t req = snake.basic.width + food.width;
+                        if ((food.pos - snake.segments[0]).norm_sq() > req * req)
+                            continue;
                         snake.basic.score += static_cast<score_t>(food.width);
                         const size_t new_length = std::min<size_t>(snake.basic.length + food.width, snake_max_length);
                         while (snake.basic.length < new_length) {
@@ -369,16 +417,18 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                         food.pos = session.food_set.erase_key;
                     }
                 }
+                session.snakes_set.refresh();
                 // Add food
                 const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
                     std::poisson_distribution<size_t>(food_per_player_tick * session.players)(game.rng_));
+                std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
                 for (size_t j = 0; j < food_added; ++j) {
                     delta.foods_added[delta.foods_added_size++] = {
                         .pos = {
                             std::uniform_real_distribution<scalar_t>(0, session.width)(game.rng_),
                             std::uniform_real_distribution<scalar_t>(0, session.height)(game.rng_)
                         },
-                        .width = std::uniform_real_distribution<scalar_t>(food_min_width, food_max_width)(game.rng_)
+                        .width = food_width_dist(game.rng_)
                     };
                 }
                 session.food_set.insert(std::span(delta.foods_added.begin(), delta.foods_added_size));
@@ -387,40 +437,33 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 // Write to buffer
                 delta_text_size = store_delta(delta_text, session, delta);
                 if (snapshot_requested) {
-                    snapshot_text_size = store_snapshot(snapshot_text, tick, session);
+                    snapshot_text_size = store_snapshot(snapshot_text, session);
                 }
             }
             // Send packets
             for (id_t j = 0; j < session.human_players; ++j) {
-                const in_packet& in_packet = in_packets[j];
+                const in_packet_info& in_packet = in_packets[j];
                 const bool snapshot_requested = in_packet.tick == tick && in_packet.snapshot_requested;
-                std::byte buffer[std::max(delta_packet_max_text_size, snapshot_packet_max_text_size) +
-                    data_packet::header_size];
-                data_packet packet(buffer, snapshot_requested
-                    ? (snapshot_text_size + data_packet::header_size)
-                    : (delta_text_size + data_packet::header_size));
                 const std::span<std::byte> text = snapshot_requested
                     ? std::span(snapshot_text, snapshot_text_size)
                     : std::span(delta_text, delta_text_size);
-                std::ranges::copy(text, packet.text().begin());
-                send_packet(packet, j);
+                send_packet(j, text);
             }
             // Check for game end
             if (tick >= session.max_tick) {
-                game.sm_.deallocate(i);
                 std::byte termination_text[termination_max_text_size];
                 const size_t termination_text_size = store_termination(termination_text, session);
                 for (id_t j = 0; j < session.human_players; ++j) {
-                    std::byte buffer[termination_max_text_size + data_packet::header_size];
-                    data_packet packet(buffer, sizeof(buffer));
-                    std::ranges::copy_n(termination_text, termination_text_size, packet.text().begin());
-                    send_packet(packet, j);
+                    send_packet(j, std::span(termination_text, termination_text_size));
                 }
+                game.sm_.deallocate(i);
                 continue;
             }
             // Increment tick
             (void) std::atomic_ref(session.tick).fetch_add(1, std::memory_order::relaxed);
         }
+        next_tick += game_tick_rate;
+        std::this_thread::sleep_until(next_tick);
     }
 }
 

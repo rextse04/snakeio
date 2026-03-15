@@ -1,7 +1,7 @@
 import React, {useCallback, useContext, useEffect, useRef, useState} from "react";
 import {packet_manager, PacketManager} from "./packet.ts";
-import {all_players, LobbyRoom, UIContext} from "./App.tsx";
-import Lobby from "./Lobby.tsx";
+import {UIContext} from "./App.tsx";
+import Lobby, {all_players, LobbyRoom} from "./Lobby.tsx";
 import "../css/Game.css";
 
 interface Point {
@@ -25,7 +25,7 @@ interface Snake extends SnakeBasic {
 
 interface Food {
     pos: Point;
-    radius: number;
+    width: number;
     color: string;
 }
 
@@ -55,7 +55,7 @@ const FOOD_COLORS = [
     "#ffa500"
 ];
 
-const GAME_MAX_WIDTH = 2048, GAME_MAX_HEIGHT = 1024;
+const GAME_MAX_WIDTH = 32768, GAME_MAX_HEIGHT = 16784;
 const SNAKE_BASIC_SIZE = 24;
 const SEGMENT_SIZE = 8;
 const FOOD_SIZE = 12;
@@ -87,7 +87,7 @@ function parseFood(view: DataView, offset: number) {
     const y = view.getFloat32(offset + 4, true);
     const radius = view.getFloat32(offset + 8, true);
     return {
-        food: {pos: {x, y}, radius, color: getFoodColor(radius)} as Food,
+        food: {pos: {x, y}, width: radius, color: getFoodColor(radius)} as Food,
         nextOffset: offset + FOOD_SIZE
     };
 }
@@ -103,10 +103,9 @@ export default function Game({room}: {room: LobbyRoom}) {
     const snakes = useRef<Snake[]>([]);
     const foods = useRef(new Map<number, Food>());
     const maxTick = useRef(0);
-    const currentTick = useRef(-1);
 
     useEffect(() => {
-        const unlisten = packet_manager.onrecv((tick, data) => {
+        const listener = (tick: number, data: Uint8Array) => {
             const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
             const type = view.getUint32(0, true);
             switch(type) {
@@ -195,20 +194,16 @@ export default function Game({room}: {room: LobbyRoom}) {
                     break;
                 }
             }
-            currentTick.current = tick;
-        });
-
+        };
+        packet_manager.add_listener(listener);
         const packet = new ArrayBuffer(PacketManager.align(8));
         new DataView(packet).setUint32(0, 1, true);
         packet_manager.send(new Uint8Array(packet));
-
-        return () => {
-            unlisten.then(f => f());
-        };
+        return () => packet_manager.remove_listener(listener);
     }, []);
 
     const draw = useCallback(() => {
-        if (currentTick.current < 0) return;
+        if (packet_manager.tick < 0) return;
 
         const snakeCtx = snakeCanvasRef.current!.getContext("2d")!;
         const foodCtx = foodCanvasRef.current!.getContext("2d")!;
@@ -238,12 +233,12 @@ export default function Game({room}: {room: LobbyRoom}) {
             foodCtx.globalAlpha = 0.5;
             foodCtx.fillStyle = food.color;
             foodCtx.beginPath();
-            foodCtx.arc(screenX, screenY, food.radius, 0, 2 * Math.PI);
+            foodCtx.arc(screenX, screenY, food.width, 0, 2 * Math.PI);
             foodCtx.fill();
 
             foodCtx.globalAlpha = 1;
             foodCtx.beginPath();
-            foodCtx.arc(screenX, screenY, food.radius / 2, 0, 2 * Math.PI);
+            foodCtx.arc(screenX, screenY, food.width / 2, 0, 2 * Math.PI);
             foodCtx.fill();
         });
 
@@ -257,14 +252,14 @@ export default function Game({room}: {room: LobbyRoom}) {
                 const screenY = seg.y + offsetY;
 
                 snakeCtx.beginPath();
-                snakeCtx.arc(screenX, screenY, snake.width / 2, 0, 2 * Math.PI);
+                snakeCtx.arc(screenX, screenY, snake.width, 0, 2 * Math.PI);
                 snakeCtx.fill();
                 
                 if (i === 0) { // Head
                     // Draw eyes
                     snakeCtx.fillStyle = "white";
-                    const eyeDist = snake.width/2 * 0.7;
-                    const eyeRadius = snake.width/2 * 0.3;
+                    const eyeDist = snake.width * 0.7;
+                    const eyeRadius = snake.width * 0.3;
                     
                     // Left eye
                     const leX = screenX + eyeDist * Math.cos(snake.angle - 0.5);
@@ -306,14 +301,18 @@ export default function Game({room}: {room: LobbyRoom}) {
         const scoreboard = [];
         for (let i = 0; i < all_players(room); i++) {
             const snake = snakes.current[i];
-            if (!snake.alive || !snake.alive) continue;
+            if (!snake.alive) continue;
+            const username = (i < room.players.length)
+                ? room.players[i].username
+                : ("AI " + (i - room.players.length + 1));
             scoreboard.push({
-                username: room.players[i].username,
+                username: username,
                 score: snake.score,
                 color: snake.color
             });
         }
-        scoreboard.sort((a, b) => b.score - a.score);
+        scoreboard.sort((a, b) =>
+            b.score - a.score);
         scoreboard.forEach((item, i) => {
             snakeCtx.fillStyle = item.color;
             snakeCtx.fillText(`${item.username}: ${item.score}`, 20, 30 + i * 20);

@@ -17,9 +17,11 @@ namespace snakeio {
     struct game::impl {
         struct in_packet {
             sockaddr_storage addr;
-            tick_t tick;
             bool snapshot_requested;
             scalar_t angle;
+        };
+        struct in_packet_info : in_packet {
+            tick_t tick;
         };
         struct out_delta {
             size_t foods_added_size = 0, foods_removed_size = 0;
@@ -36,15 +38,16 @@ namespace snakeio {
 
         struct client {
             key_t key;
-            atomic_align(in_packet) last_packet;
+            atomic_align(tick_t) tick;
+            in_packet last_packet;
         };
 
         struct session {
-            using snakes_set_type = cpu::spatial_set<snake_max_width, snake_max_length * game_max_players,
+            using snakes_set_type = cpu::spatial_set<snake_max_width * 2, snake_max_length * game_max_players,
                 std::tuple<snake*, vector2d*>,
                 [](const auto& node) { return *std::get<1>(node); },
                 [](auto& node, const vector2d& pos) { std::get<1>(node) = const_cast<vector2d*>(&pos); }>;
-            using food_set_type = cpu::spatial_set<(snake_max_width + food_max_width) / 2, game_max_food,
+            using food_set_type = cpu::spatial_set<snake_max_width + food_max_width, game_max_food,
                 food,
                 [](const food& node) { return node.pos; },
                 [](food& node, const vector2d& value) { node.pos = value; }>;
@@ -77,12 +80,10 @@ namespace snakeio {
         std::array<std::array<client, game_max_players>, game_max_sessions> clients;
         std::array<session, game_max_sessions> sessions;
 
-        static void erase_snake(game& game, session& session,
-            snake& snake, size_t& erase_count, out_delta& delta) noexcept;
         static size_t store_delta(std::byte* out, const session& session, out_delta& delta) noexcept;
-        static size_t store_snapshot(std::byte* out, tick_t tick, const session& session) noexcept;
+        static size_t store_snapshot(std::byte* out, const session& session) noexcept;
         static size_t store_lobby_status(std::byte* out, tick_t tick,
-            const std::array<in_packet, 16>& in_packets, const session& session) noexcept;
+            std::span<const in_packet_info> in_packets) noexcept;
         static size_t store_termination(std::byte* out, const session& session) noexcept;
         static void port(game& game, std::stop_token stop_token, int sock) noexcept;
         static void game_loop(game& game, std::stop_token stop_token, int sock) noexcept;

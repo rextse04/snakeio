@@ -1,5 +1,6 @@
 #pragma once
-#include "vector.hpp"
+#include <config.hpp>
+#include <vector.hpp>
 
 namespace snakeio {
     struct food {

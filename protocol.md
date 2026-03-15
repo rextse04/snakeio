@@ -6,6 +6,10 @@
 - Unless otherwise specified, every packet is packed,
 i.e. no padding is added.
 - All packet formats in this document are expected to be sent over UDP.
+- Except for the last section (on encryption and decryption),
+a "packet" may not correspond to a single network packet.
+When the size of a "packet" is greater 1024 bytes,
+it is split into multiple chunks each of size 1024 bytes before encryption.
 
 # Server Architecture
 The server consists of two planes:
@@ -30,17 +34,16 @@ The game opens three ports:
    - Player ID
    - Number of players and their usernames
    - Unique key for encryption
-4. Clients send (true, 0) to 50002 to join the lobby.
-5. 50002 sends lobby status to clients at regular intervals.
+4. Clients send (true, 0) to 50003 to join the lobby.
+5. 50003 sends lobby status to clients at regular intervals.
 Clients need to respond with (true, 0) until all players have joined.
-6. After all players have joined, 50002 sends the initial game snapshot to all clients.
-7. Clients and 50002 communicate using the specified packet format below.
-8. When tick reaches max_tick, i.e. when client receives a packet at tick = max_tick - 1,
-game terminates. Clients disconnect.
+6. After all players have joined, 50003 sends the initial game snapshot to all clients.
+7. Clients and 50003 communicate using the specified packet format below.
+8. When game terminates, 50003 sends the termination packet to all clients.
 
 # 50002
-This is the control UDP port used by the local control plane (bound to the IPv6 loopback).
-It accepts simple commands from the internal control client (for example, the WebSocket server on port 50000)
+This is the UDP port used by the local data plane (bound to the IPv6 loopback).
+It accepts simple commands from the internal control client (50001)
 to manage server lifecycle and create new game sessions.
 
 ## Client to Server (50001 -> 50002)
@@ -156,21 +159,23 @@ Size = 12
 All packets between client and server are encrypted using ChaCha20-poly1305
 ([RFC 8439](https://www.rfc-editor.org/rfc/rfc8439.html)).
 ## Format of encrypted packets
-| Field      | Type     | Size     | Description            |
-|------------|----------|----------|------------------------|
-| session_id | unsigned | 4        | Session ID.            |
-| player_id  | unsigned | 4        | Player ID.             |
-| sender     | unsigned | 4        | Client: 0; Server: 1.  |
-| nonce_part | unsigned | 4        | Last 4 bytes of nonce. |
-| ciphertext | byte[]   | variable | Ciphertext.            |
-| tag        | byte[16] | 16       | Tag.                   |
-- player_id, sender and nonce_part form the nonce.
+| Field        | Type     | Size     | Description                                   |
+|--------------|----------|----------|-----------------------------------------------|
+| session_id   | unsigned | 4        | Session ID.                                   |
+| player_id    | unsigned | 4        | Player ID.                                    |
+| sender       | unsigned | 1        | Client: 0; Server: 1.                         |
+| total_chunks | unsigned | 1        | Total number of chunks in the logical packet. |
+| chunk_id     | unsigned | 1        | The number of chunks preceding this packet.   |
+| padding      | -        | 1        | Padding.                                      |
+| nonce_part   | unsigned | 4        | Last 4 bytes of nonce.                        |
+| ciphertext   | byte[]   | variable | Ciphertext.                                   |
+| tag          | byte[16] | 16       | Tag.                                          |
+- The 4th to 16th bytes form the nonce.
 - When sender is 0 (the packet is from client), nonce_part is implementation-defined.
 Only uniqueness of the nonce needs to be guaranteed,
 so clients can use any method to generate nonce_part as long as it ensures uniqueness.
-- When sender is 1 (the packet is from server), nonce_part is the tick number.
-  - As only one packet is sent per tick, this is sufficient to ensure uniqueness.
-- section_id, player_id, sender and nonce_part form the additional authenticated data (AAD).
-In other words, when verifying tag, treat the length of AAD as 16.
-- Size of ciphertext must be a multiple of 16.
+- When sender is 1 (the packet is from server), nonce_part is the (authoritative) tick number.
+  - As only one logical packet is sent per tick, this is sufficient to ensure uniqueness.
+- The first 16 bytes form the additional authenticated data (AAD).
+- Size of ciphertext must be a multiple of 16, pad if necessary as per RFC 8439.
   - Server must check that the ciphertext size is divisible by 16 before decryption.

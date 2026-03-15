@@ -5,6 +5,7 @@
 #include <array>
 #include <span>
 #include <algorithm>
+#include <cassert>
 #include <ranges>
 #include <type_traits>
 #include <functional>
@@ -98,7 +99,24 @@ namespace snakeio::cpu {
     private:
         size_type size_ = 0;
         std::array<value_type, ObjsSize + 1> nodes_;
-
+#ifndef NDEBUG
+        bool ready_ = true;
+#endif
+        constexpr void ready() noexcept {
+#ifndef NDEBUG
+            ready_ = true;
+#endif
+        }
+        constexpr void unready() noexcept {
+#ifndef NDEBUG
+            ready_ = false;
+#endif
+        }
+        constexpr void check_ready() const noexcept {
+#ifndef NDEBUG
+            assert(ready_);
+#endif
+        }
         constexpr auto span(this auto&& self) noexcept {
             return std::span{self.nodes_.data(), self.size_};
         }
@@ -117,6 +135,9 @@ namespace snakeio::cpu {
             insert(std::forward<R>(nodes));
             refresh();
         }
+        constexpr auto&& operator[](this auto&& self, size_type idx) noexcept {
+            return self.nodes_[idx];
+        }
         constexpr auto begin(this auto&& self) noexcept {
             return self.span().begin();
         }
@@ -131,15 +152,18 @@ namespace snakeio::cpu {
         }
         constexpr bool empty() const noexcept { return size() == 0; }
         constexpr size_type size() const noexcept { return size_; }
-        static constexpr size_type max_size() noexcept { return std::numeric_limits<size_type>::max(); }
+        static constexpr size_type max_size() noexcept { return ObjsSize; }
         constexpr void clear() noexcept { size_ = 0; }
         // Erases n elements at the back.
+        // UB if the elements are not erase_key.
         // Common use case: set n deleted nodes to erase_key, refresh(), then erase(n).
         constexpr void erase(size_type n) noexcept {
-            SetPos(nodes_[size_ -= n], erase_key);
+            size_ -= n;
+            assert(GetPos(nodes_[size_]) == erase_key);
         }
         constexpr void insert(const value_type& node) noexcept {
             nodes_[size_++] = node;
+            unready();
         }
         template <utils::container_compatible_range<value_type> R>
         constexpr void insert(R&& nodes) noexcept {
@@ -149,6 +173,7 @@ namespace snakeio::cpu {
             } else {
                 for (const value_type& seg : nodes) insert(seg);
             }
+            unready();
         }
         constexpr void insert(std::initializer_list<value_type> nodes) noexcept {
             return insert<std::initializer_list<value_type>>(nodes);
@@ -164,12 +189,14 @@ namespace snakeio::cpu {
                 return cell_id(GetPos(node));
             });
             SetPos(nodes_[size_], erase_key);
+            ready();
         }
         // UB if any node is inserted or if GetPos(node) is changed for any existing node
-        // after the last call to refresh.
+        // after the last call to refresh, unless GetPos(node) becomes erase_key for some node.
         // UB if key is outside game window.
         template <typename Self>
-        constexpr auto find(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
+        constexpr auto find_possible(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
+            self.check_ready();
             const size_type cell_radius =
                 static_cast<size_type>(radius / cell_length) + (std::fmod(radius, cell_length) > 0);
             const size_type center_row = row_id(key);
@@ -180,10 +207,13 @@ namespace snakeio::cpu {
                 row_begin, std::min<size_type>(rows, center_row + cell_radius + 1),
                 column_begin, std::min<size_type>(columns, center_column + cell_radius + 1),
                 self.find_begin(cell_id(row_begin, column_begin))
-            ), std::default_sentinel)
-            | std::views::filter([key, radius](const value_type& t) {
-                auto d = static_cast<vector2d>(GetPos(t)) - key;
-                return d[0] * d[0] + d[1] * d[1] < radius * radius;
+            ), std::default_sentinel);
+        }
+        // See documentation on find_possible.
+        template <typename Self>
+        constexpr auto find(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
+            return self.find_possible(key, radius) | std::views::filter([key, radius](const value_type& t) {
+                return (static_cast<vector2d>(GetPos(t)) - key).norm_sq() < radius * radius;
             });
         }
     };

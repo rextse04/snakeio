@@ -1,10 +1,31 @@
 import React, {RefObject, useContext, useEffect, useId, useRef, useState} from "react";
-import {UIContext, PlayerRole, Player, LobbyRoom, GameContext} from "./App.tsx";
+import {UIContext, GameContext} from "./App.tsx";
 import "../css/Lobby.css";
 import {invoke} from "@tauri-apps/api/core";
-import {packet_manager, PacketManager} from "./packet.ts";
+import {packet_manager} from "./packet.ts";
 import Game from "./Game.tsx";
 
+export enum PlayerRole {
+    MEMBER = 0,
+    AI = 0.5,
+    ADMIN = 1,
+    OWNER = 2
+}
+export type Player = {
+    server_id: number;
+    username: string;
+    role?: PlayerRole;
+};
+export type LobbyRoom = {
+    token: string;
+    players: Array<Player>;
+    is_public?: boolean;
+    ai_players?: number;
+};
+
+export function all_players(room: LobbyRoom) {
+    return room.players.length + (room.ai_players || 0);
+}
 function role_name(role: PlayerRole) {
     switch (role) {
         case PlayerRole.MEMBER: return "member";
@@ -14,6 +35,7 @@ function role_name(role: PlayerRole) {
         default: return "unknown";
     }
 }
+
 function LobbyPlayer({wsRef, room, user, player}:
                      {wsRef: RefObject<WebSocket | undefined>, room: LobbyRoom, user: Player, player: Player}) {
     let icon = "fa-person-circle-question";

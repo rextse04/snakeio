@@ -2,8 +2,10 @@
 #include "cpp_utils/integer.hpp"
 #include <cstdint>
 #include <limits>
+#include <cmath>
 #include <chrono>
 #include <array>
+#include <algorithm>
 
 namespace snakeio {
     using namespace std::chrono_literals;
@@ -17,26 +19,26 @@ namespace snakeio {
     using tick_t = std::uint_least32_t;
 
     constexpr id_t game_max_sessions = 1 << 12;
-    constexpr id_t game_max_players = 4*4;
+    constexpr id_t game_max_players = 16;
     constexpr scalar_t game_width_psqp = 2048, game_height_psqp = 1024;
-    constexpr scalar_t game_max_width = game_width_psqp * 4, game_max_height = game_height_psqp * 4;
-    constexpr scalar_t game_max_area = game_width_psqp * game_height_psqp * game_max_players;
+    constexpr scalar_t game_max_width = game_width_psqp * std::sqrt(game_max_players),
+        game_max_height = game_height_psqp * std::sqrt(game_max_players);
     constexpr size_t game_init_food_pp = 32;
     constexpr size_t game_max_food_pp = 128, game_max_food = game_max_food_pp * game_max_players;
     constexpr auto game_tick_rate = 20ms;
     constexpr tick_t game_max_tick = 300s / game_tick_rate;
 
-    constexpr scalar_t snake_init_speed = 5, snake_init_width = 16;
+    constexpr scalar_t snake_init_speed = 5, snake_init_width = 8;
     constexpr scalar_t snake_max_width = snake_init_width;
     constexpr size_t snake_init_length = 10;
     constexpr size_t snake_max_length = 1024;
     // distance between each segment as fraction of width
     constexpr scalar_t snake_displacement_factor = 0.25;
 
-    constexpr scalar_t food_min_width = 1, food_max_width = 10;
-    constexpr scalar_t seg_to_food_width = 8;
-    static_assert(seg_to_food_width <= food_max_width);
-    constexpr scalar_t seg_to_food_prob = 0.35;
+    constexpr scalar_t gen_food_min_width = 1, gen_food_max_width = 5;
+    constexpr scalar_t seg_to_food_prob = 0.25;
+    constexpr scalar_t seg_food_min_width = 6, seg_food_max_width = 10;
+    constexpr scalar_t food_max_width = std::max(gen_food_max_width, seg_food_max_width);
     constexpr float food_per_player_tick = 1./64; // expected value
 
     constexpr std::uint_least16_t control_plane_ext_port = 50000,
@@ -52,4 +54,5 @@ namespace snakeio {
         snapshot_packet_max_text_size = align(4 + 4 + 4 + game_max_players * (24 + 8 * snake_max_length) + 4 + 12 * game_max_food),
         lobby_status_max_text_size = align(game_max_players),
         termination_max_text_size = align(24 * game_max_players);
+    constexpr size_t packet_chunk_size = 1024;
 }

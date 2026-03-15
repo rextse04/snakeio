@@ -52,7 +52,7 @@ pub fn run() {
 
                 // Spawn background thread for receiving
                 thread::spawn(move || {
-                    let mut buf = [0u8; 2048];
+                    let mut buf = [0u8; 1024 + 32];
 
                     loop {
                         if let Ok(len) = recv_socket.recv(&mut buf) {

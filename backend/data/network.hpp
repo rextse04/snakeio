@@ -1,4 +1,8 @@
 #pragma once
+#include <cstring>
+#include <logger.hpp>
+#include <span>
+#include <cstring>
 #include <format>
 
 #if __has_include(<sys/socket.h>) && __has_include(<netinet/in.h>) && __has_include(<netdb.h>)
@@ -13,6 +17,17 @@
 #else
     #error "Unsupported platform. Link with a library that provides POSIX sockets API and include the headers in this file."
 #endif
+
+namespace snakeio {
+    inline ssize_t sendto(int sock, std::span<std::byte> buffer, const sockaddr_storage& addr) {
+        const ssize_t res = sendto(sock, buffer.data(), buffer.size(), 0,
+            reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_storage));
+        if (res == -1) [[unlikely]] {
+            logger::warn("sendto failed: {}.", std::strerror(errno));
+        }
+        return res;
+    }
+}
 
 template <>
 struct std::formatter<sockaddr_storage, char> {

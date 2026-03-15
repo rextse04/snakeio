@@ -98,8 +98,7 @@ static void control_port(std::stop_source stop_source, int sock) {
                     logger::warn("Failed to create new session: {}.", error);
                     buffer[6] = static_cast<std::byte>(id.error());
                 }
-                sendto(sock, buffer, header_size + 4, 0,
-                    reinterpret_cast<const sockaddr*>(&client_addr), client_addr_len);
+                sendto(sock, std::span(buffer, header_size + 4), client_addr);
                 break;
             }
             default: {

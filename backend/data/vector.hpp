@@ -60,6 +60,13 @@ namespace snakeio {
             }
             return *this;
         }
+        constexpr scalar_t norm_sq() const noexcept {
+            scalar_t result = 0;
+            for (std::size_t i = 0; i < Dim; ++i) {
+                result += (*this)[i] * (*this)[i];
+            }
+            return result;
+        }
     };
 
     using vector2d = vector<2>;

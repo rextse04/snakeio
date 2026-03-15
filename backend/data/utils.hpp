@@ -7,6 +7,15 @@
 #include <array>
 
 namespace snakeio {
+    constexpr std::uint_least16_t load_16(std::span<const std::byte, 2> bytes) noexcept {
+        return (static_cast<std::uint_least16_t>(bytes[0]) << 0) |
+               (static_cast<std::uint_least16_t>(bytes[1]) << 8);
+    }
+    constexpr void store_16(std::span<std::byte, 2> out, std::uint_least16_t value) noexcept {
+        out[0] = static_cast<std::byte>(value >> 0);
+        out[1] = static_cast<std::byte>(value >> 8);
+    }
+
     constexpr std::uint_least32_t load_32(std::span<const std::byte, 4> bytes) noexcept {
         return (static_cast<std::uint_least32_t>(bytes[0]) << 0) |
                (static_cast<std::uint_least32_t>(bytes[1]) << 8) |
