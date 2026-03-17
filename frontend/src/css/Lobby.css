@@ -24,6 +24,13 @@
     gap: 5px;
 }
 
+.lobby .username.connected {
+    color: lightgreen;
+}
+.lobby .username.disconnected {
+    color: lightcoral;
+}
+
 .lobby .start-btn {
     font-size: xx-large;
 }

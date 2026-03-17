@@ -1,4 +1,11 @@
-body > * {
+body {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    border: none;
+    padding: 0;
+}
+#root {
     width: 100%;
     height: 100%;
 }
@@ -12,4 +19,14 @@ body > * {
 
 .flex-spacer {
     flex: 1;
+}
+
+table.scoreboard {
+    border-collapse: collapse;
+}
+table.scoreboard :is(th, td) {
+    text-align: left;
+}
+table.scoreboard :is(th, td):not(:last-child) {
+    padding-right: 10px;
 }

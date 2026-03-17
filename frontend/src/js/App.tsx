@@ -1,23 +1,44 @@
-import React, {createContext, JSX, useState} from "react";
+import React, {createContext, JSX, SetStateAction, useEffect, useState} from "react";
 import "../css/App.css";
+import "../css/game.css";
 import "../css/ui.css";
 import Lobby from "./Lobby.tsx";
 
-function useElement(element: JSX.Element | undefined) {
+function useGame(element: JSX.Element | undefined) {
     return useState(element);
+}
+function useUI(element: JSX.Element | undefined) {
+    const [UI, _setUI] = useState(element);
+    const [hidden, setHidden] = useState(false);
+    const setUI = (nextState: SetStateAction<typeof element>) => {
+        _setUI(nextState);
+        setHidden(false);
+    };
+    return [UI, setUI, hidden, setHidden] as const;
 }
 
 export const GameContext =
-    createContext(null as unknown as ReturnType<typeof useElement>);
+    createContext(null as unknown as ReturnType<typeof useGame>);
 export const UIContext =
-    createContext(null as unknown as ReturnType<typeof useElement>);
+    createContext(null as unknown as ReturnType<typeof useUI>);
 export default function App() {
-    const [game, setGame] = useElement(undefined);
-    const [UI, setUI] = useElement(<Lobby />);
+    const [game, setGame] = useGame(undefined);
+    const [UI, setUI, hidden, setHidden] = useUI(<Lobby />);
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                setHidden(false);
+            }
+        };
+        addEventListener("keydown", onKeyDown);
+        return () => removeEventListener("keydown", onKeyDown);
+    }, []);
+
     return <GameContext.Provider value={[game, setGame]}>
-    <UIContext.Provider value={[UI, setUI]}>
+    <UIContext.Provider value={[UI, setUI, hidden, setHidden]}>
         <div id="game">{game}</div>
-        {UI && <div id="ui">{UI}</div>}
+        {UI && <div id="ui" style={{visibility: hidden ? "hidden" : "visible"}}>{UI}</div>}
     </UIContext.Provider>
     </GameContext.Provider>;
 }

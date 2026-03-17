@@ -5,11 +5,16 @@
 - All angles are in radians.
 - Unless otherwise specified, every packet is packed,
 i.e. no padding is added.
+    - Most explicit padding in this document is for alignment.
 - All packet formats in this document are expected to be sent over UDP.
-- Except for the last section (on encryption and decryption),
-a "packet" may not correspond to a single network packet.
+- A "packet" (logical packet) may not correspond to a single network packet.
 When the size of a "packet" is greater 1024 bytes,
-it is split into multiple chunks each of size 1024 bytes before encryption.
+it is split into multiple chunks (transport packets) each of size 1024 bytes before encryption,
+except for the last chunk, which may be smaller.
+- Maximum sizes for packet formats in this document are calculated based on the current implementation.
+They are for reference only and may change in the future.
+- The server may impose additional limits on packet fields
+(e.g. maximum number of players, maximum world size, etc.)
 
 # Server Architecture
 The server consists of two planes:
@@ -25,6 +30,10 @@ The game opens three ports:
 | 50001 | Control | UDP                      | Internal (::50002) |
 | 50002 | Data    | UDP                      | Internal (::50001) |
 | 50003 | Data    | UDP, encrypted           | External           |
+
+This document mainly describes the protocol for communication to and from the data plane.
+Communication between clients and 50000 is expected to be in JSON format.
+This document does not cover the WebSocket protocol due to rapid changes in features and implementation.
 
 # Outline of Game Flow
 1. Clients connect to 50000.
@@ -73,21 +82,28 @@ If the client sends a command that requires a response, the server responds with
 | args  | -        | variable | See below.  |
 
 ### New Session Token (1)
-| Field         | Type     | Size | Description                                                 |
-|---------------|----------|------|-------------------------------------------------------------|
-| session_token | char[5]  | 5    | ASCII token provided by the control client.                 |
-| result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: unknown error. |
-| padding       | -        | 1    | Padding.                                                    |
-| session_id    | unsigned | 4    | Session ID assigned to session_token.                       | |
+| Field         | Type     | Size | Description                                                    |
+|---------------|----------|------|----------------------------------------------------------------|
+| session_token | char[5]  | 5    | Non-NUL-terminated ASCII token provided by the control client. |
+| result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: unknown error.    |
+| padding       | -        | 1    | Padding.                                                       |
+| session_id    | unsigned | 4    | Session ID assigned to session_token.                          |
 Size = 12
+
+- The server simply echos the session_token back to the client.
+The control client is responsible for defining the requirements for and sanitizing session_token given by the user.
+- Undefined value for session_id if result is not 0.
 
 # 50003
 ## Client to Server
 | Field              | Type  | Size | Description                                             |
 |--------------------|-------|------|---------------------------------------------------------|
-| snapshot_requested | bool  | 4    | Whether a snapshot should be requested from the server. |
+| snapshot_requested | bool  | 1    | Whether a snapshot should be requested from the server. |
+| padding            | -     | 3    | Padding.                                                |
 | angle              | float | 4    | Update to player's angle.                               |
 Size = 8
+
+- The server must reject if angle is not finite.
 
 ## Server to Client
 | Field         | Type         | Size     | Description                                            |
@@ -106,20 +122,24 @@ Size = 8
 Max size = 41352 (~41KB)
 
 ### snapshot
-| Field      | Type      | Size               | Description              |
-|------------|-----------|--------------------|--------------------------|
-| width      | float     | 4                  | World width.             |
-| height     | float     | 4                  | World height.            |
-| max_tick   | unsigned  | 4                  | Termination tick number. |
-| snakes     | snake[]   | variable * players | See below.               |
-| foods_size | unsigned  | 4                  | Number of foods.         |
-| foods      | food[]    | 12 * foods_size    | See below.               |
+| Field      | Type     | Size               | Description              |
+|------------|----------|--------------------|--------------------------|
+| width      | float    | 4                  | World width.             |
+| height     | float    | 4                  | World height.            |
+| max_tick   | unsigned | 4                  | Termination tick number. |
+| players    | unsigned | 4                  | Number of players.       |
+| snakes     | snake[]  | variable * players | See below.               |
+| foods_size | unsigned | 4                  | Number of foods.         |
+| foods      | food[]   | 12 * foods_size    | See below.               |
 Max size = 156048 (~154KB)
+- players remains constant for the entire game.
+- The client is expected to have learnt players from 50000.
+That said, this field is included in the snapshot to allow construction of game state without context.
 
 ### lobby_status
-| Field     | Type   | Size        | Description                       |
-|-----------|--------|-------------|-----------------------------------|
-| connected | bool[] | 1 * players | Whether each player is connected. |
+| Field     | Type   | Size              | Description                       |
+|-----------|--------|-------------------|-----------------------------------|
+| connected | bool[] | 1 * human_players | Whether each player is connected. |
 Max size = 16
 
 ### termination
@@ -158,24 +178,26 @@ Size = 12
 # Encryption and Decryption
 All packets between client and server are encrypted using ChaCha20-poly1305
 ([RFC 8439](https://www.rfc-editor.org/rfc/rfc8439.html)).
-## Format of encrypted packets
+## Format of Encrypted Transport Packets (Chunks)
 | Field        | Type     | Size     | Description                                   |
 |--------------|----------|----------|-----------------------------------------------|
 | session_id   | unsigned | 4        | Session ID.                                   |
 | player_id    | unsigned | 4        | Player ID.                                    |
 | sender       | unsigned | 1        | Client: 0; Server: 1.                         |
 | total_chunks | unsigned | 1        | Total number of chunks in the logical packet. |
-| chunk_id     | unsigned | 1        | The number of chunks preceding this packet.   |
+| chunk_id     | unsigned | 1        | The number of chunks preceding this chunk.    |
 | padding      | -        | 1        | Padding.                                      |
 | nonce_part   | unsigned | 4        | Last 4 bytes of nonce.                        |
 | ciphertext   | byte[]   | variable | Ciphertext.                                   |
 | tag          | byte[16] | 16       | Tag.                                          |
-- The 4th to 16th bytes form the nonce.
-- When sender is 0 (the packet is from client), nonce_part is implementation-defined.
-Only uniqueness of the nonce needs to be guaranteed,
+- The nonce is formed by bytes 5-16 (inclusive, 1-based).
+- When sender is 0 (the chunk is from client), nonce_part is implementation-defined.
+Only uniqueness (w.r.t. session and player) of the nonce needs to be guaranteed,
 so clients can use any method to generate nonce_part as long as it ensures uniqueness.
-- When sender is 1 (the packet is from server), nonce_part is the (authoritative) tick number.
-  - As only one logical packet is sent per tick, this is sufficient to ensure uniqueness.
+- When sender is 1 (the chunk is from server), nonce_part is the (authoritative) tick number.
+  - As only one logical packet is sent per tick per player, this is sufficient to ensure uniqueness.
 - The first 16 bytes form the additional authenticated data (AAD).
-- Size of ciphertext must be a multiple of 16, pad if necessary as per RFC 8439.
+- Size of ciphertext must be a multiple of 16, with padding if necessary.
   - Server must check that the ciphertext size is divisible by 16 before decryption.
+  - Note: This requirement is non-standard but is added for ease of implementation.
+- Only the ciphertext is encrypted. AAD and tag are not encrypted.

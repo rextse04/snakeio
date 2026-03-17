@@ -82,8 +82,7 @@ namespace snakeio {
 
         static size_t store_delta(std::byte* out, const session& session, out_delta& delta) noexcept;
         static size_t store_snapshot(std::byte* out, const session& session) noexcept;
-        static size_t store_lobby_status(std::byte* out, tick_t tick,
-            std::span<const in_packet_info> in_packets) noexcept;
+        static size_t store_lobby_status(std::byte* out, std::span<const in_packet_info> in_packets) noexcept;
         static size_t store_termination(std::byte* out, const session& session) noexcept;
         static void port(game& game, std::stop_token stop_token, int sock) noexcept;
         static void game_loop(game& game, std::stop_token stop_token, int sock) noexcept;

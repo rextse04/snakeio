@@ -1,9 +1,10 @@
-import React, {RefObject, useContext, useEffect, useId, useRef, useState} from "react";
+import React, {RefObject, useCallback, useContext, useEffect, useId, useRef, useState} from "react";
 import {UIContext, GameContext} from "./App.tsx";
-import "../css/Lobby.css";
 import {invoke} from "@tauri-apps/api/core";
-import {packet_manager} from "./packet.ts";
+import {Packet, packet_manager, PacketManager} from "./packet.ts";
 import Game from "./Game.tsx";
+import LobbyBackground from "./LobbyBackground.tsx";
+import "../css/Lobby.css";
 
 export enum PlayerRole {
     MEMBER = 0,
@@ -15,16 +16,24 @@ export type Player = {
     server_id: number;
     username: string;
     role?: PlayerRole;
+    connected?: boolean;
 };
 export type LobbyRoom = {
     token: string;
-    players: Array<Player>;
+    players: Player[];
     is_public?: boolean;
     ai_players?: number;
 };
 
 export function all_players(room: LobbyRoom) {
     return room.players.length + (room.ai_players || 0);
+}
+export function username_of(room: LobbyRoom, player_id: number) {
+    if (player_id < room.players.length) {
+        return room.players[player_id].username;
+    } else {
+        return "AI " + (player_id - room.players.length + 1);
+    }
 }
 function role_name(role: PlayerRole) {
     switch (role) {
@@ -36,8 +45,8 @@ function role_name(role: PlayerRole) {
     }
 }
 
-function LobbyPlayer({wsRef, room, user, player}:
-                     {wsRef: RefObject<WebSocket | undefined>, room: LobbyRoom, user: Player, player: Player}) {
+function LobbyPlayer({wsRef, room, user, player, disabled = false}:
+    {wsRef: RefObject<WebSocket | undefined>, room: LobbyRoom, user: Player, player: Player, disabled?: boolean}) {
     let icon = "fa-person-circle-question";
     switch (player.role) {
         case PlayerRole.AI: icon = "fa-robot"; break;
@@ -75,14 +84,18 @@ function LobbyPlayer({wsRef, room, user, player}:
         }
     };
     const kickable = user.server_id !== player.server_id && user.role! < player.role!;
+    const usernameClasses = ["username"];
+    if (player.connected !== undefined) {
+        usernameClasses.push(player.connected ? "connected" : "disconnected");
+    }
     return <div>
-        <button className="icon" disabled={player.role === PlayerRole.AI || player.role === PlayerRole.OWNER}
+        <button className="icon" disabled={disabled || player.role === PlayerRole.AI || player.role === PlayerRole.OWNER}
             onClick={onRoleChange}>
             <i className={"fa-solid " + icon}></i>
         </button>
-        <span className="username">{player.username}</span>
+        <span className={usernameClasses.join(" ")}>{player.username}</span>
         <div className="flex-spacer"></div>
-        <button className="icon" disabled={kickable} onClick={onKick}>
+        <button className="icon" disabled={disabled || kickable} onClick={onKick}>
             <i className="fa-solid fa-xmark"></i>
         </button>
     </div>;
@@ -98,9 +111,15 @@ export default function Lobby() {
         token: "",
         players: []
     } as LobbyRoom);
+    const [started, setStarted] = useState(false);
     const roomRef = useRef(room);
+
+    useEffect(() => {
+        setGame(<LobbyBackground />);
+    }, []);
+
     const wsRef = useRef(undefined as WebSocket | undefined);
-    const connect = () => {
+    const connect = useCallback(() => {
         const ws = new WebSocket("ws://localhost:50000");
         ws.addEventListener("error", error => {
             console.error(error);
@@ -112,7 +131,6 @@ export default function Lobby() {
         });
         ws.addEventListener("message", raw_msg => {
             const msg = JSON.parse(raw_msg.data);
-            console.debug(msg);
             if (msg.error) {
                 alert(msg.error);
                 return;
@@ -197,15 +215,42 @@ export default function Lobby() {
                         alert("Internal server error: " + error);
                         break;
                     }
-                    setUI(undefined);
-                    setGame(<Game room={roomRef.current!} />);
+                    const keep_alive = () => {
+                        const packet = new ArrayBuffer(PacketManager.align(8));
+                        new DataView(packet).setUint8(0, 1);
+                        packet_manager.send(new Uint8Array(packet));
+                    };
+                    const listener = ({tick, data}: Packet) => {
+                        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                        if (view.getUint32(0, true) != 2) {
+                            setUI(undefined);
+                            setGame(<Game room={roomRef.current!} first_packet={{tick, data}}/>)
+                            packet_manager.remove_listener(listener);
+                            return;
+                        }
+                        setRoom(room => {
+                            const players = room.players;
+                            for (let player_id = 0; player_id < players.length; ++player_id) {
+                                players[player_id].connected = view.getUint8(4 + player_id) === 1;
+                            }
+                            return {...room, players};
+                        });
+                        keep_alive();
+                    };
+                    packet_manager.add_listener(listener);
+                    keep_alive();
+                    setStarted(true);
                     break;
                 }
             }
         });
         ws.addEventListener("open", () => wsRef.current = ws);
-    };
-    useEffect(connect, []);
+    }, []);
+    useEffect(() => {
+        connect();
+        return () => wsRef.current?.close();
+    }, []);
+
     const session_token_id = useId();
     const onUsernameChange = (e: any) => {
         setPlayer(player => ({
@@ -257,14 +302,6 @@ export default function Lobby() {
             type: "room_start"
         }));
     };
-    const ai_players = [];
-    for (let i = 1; i <= (room.ai_players ? room.ai_players : 0); ++i) {
-        ai_players.push(<LobbyPlayer key={"ai-" + i} wsRef={wsRef} user={player} room={room} player={{
-            server_id: -1,
-            username: "AI " + i,
-            role: PlayerRole.AI
-        }} />);
-    }
     return <div className="lobby">
         <div className="row-input">
             <label htmlFor="username">Username</label>
@@ -279,26 +316,37 @@ export default function Lobby() {
                        minLength={5} maxLength={5} pattern="[A-Za-z0-9]{5}"
                        title="A session token must consist of 5 alphanumeric characters."
                        value={room.token} onChange={onTokenChange}
-                       readOnly={room.players.length > 0} />
-                <button disabled={room.players.length > 0} onClick={onJoin}>Join</button>
-                <button disabled={room.players.length > 0} onClick={onCreate}>Create</button>
+                       readOnly={started || room.players.length > 0} />
+                <button disabled={started || room.players.length > 0} onClick={onJoin}>Join</button>
+                <button disabled={started || room.players.length > 0} onClick={onCreate}>Create</button>
             </div>
             {room.players.length > 0 && <div className="lobby-room">
                 <div>
-                    <input type="checkbox" checked={room.is_public} onChange={onPublicChange} />
+                    <input type="checkbox" checked={room.is_public} onChange={onPublicChange} disabled={started} />
                     <label htmlFor="lobby-room-public">Public</label>
                     <div className="flex-spacer"></div>
-                    <button className="icon" onClick={onAiPlayersChange}>
+                    <button className="icon" onClick={onAiPlayersChange} disabled={started}>
                         <i className="fa-solid fa-robot"></i>
                     </button>
                 </div>
                 {room.players.map(teammate => (
-                    <LobbyPlayer key={teammate.server_id} wsRef={wsRef} room={room} user={player} player={teammate} />
+                    <LobbyPlayer key={teammate.server_id}
+                                 wsRef={wsRef} room={room} user={player} player={teammate} disabled={started} />
                 ))}
-                {ai_players}
+                {[...function*() {
+                    for (let player_id = room.players.length; player_id < all_players(room); ++player_id) {
+                        yield <LobbyPlayer key={player_id} wsRef={wsRef} user={player} room={room} player={{
+                            server_id: -1,
+                            username: username_of(room, player_id),
+                            role: PlayerRole.AI
+                        }} disabled={started} />;
+                    }
+                }()]}
             </div>}
         </div>
         <div className="divider"></div>
-        <button className="start-btn" disabled={player.role !== PlayerRole.OWNER} onClick={onStart}>Start!</button>
+        <button className="start-btn" disabled={started || player.role !== PlayerRole.OWNER} onClick={onStart}>
+            {started ? "Waiting..." : "Start!"}
+        </button>
     </div>;
 }

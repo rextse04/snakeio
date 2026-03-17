@@ -142,9 +142,15 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
             default: std::unreachable();
         }
         packet.decrypt(client.key);
+        const scalar_t angle = load_float32(packet.text().subspan<4, 4>());
+        if (!std::isfinite(angle)) [[unlikely]] {
+            logger::debug("Received packet with invalid angle ({}) from {}.", angle, client_addr);
+            logger::print_packet(logger::debug, packet.bytes());
+            continue;
+        }
         client.last_packet = {
             .addr = client_addr,
-            .snapshot_requested = static_cast<bool>(load_32(packet.text().subspan<0, 4>())),
+            .snapshot_requested = static_cast<bool>(packet.text()[0]),
             .angle = load_float32(packet.text().subspan<4, 4>())
         };
         std::atomic_ref(client.tick).store(tick, std::memory_order::release);
@@ -212,7 +218,8 @@ snakeio::size_t game::impl::store_snapshot(std::byte* const out, const session& 
     store_float32(std::span<std::byte, 4>(it + 4, 4), session.width);
     store_float32(std::span<std::byte, 4>(it + 8, 4), session.height);
     store_32(std::span<std::byte, 4>(it + 12, 4), session.max_tick);
-    it += 16;
+    store_32(std::span<std::byte, 4>(it + 16, 4), session.players);
+    it += 20;
     for (const snake& snake : session.snakes_view()) {
         it = store_snake(it, snake);
     }
@@ -227,13 +234,12 @@ snakeio::size_t game::impl::store_snapshot(std::byte* const out, const session& 
     return size;
 }
 
-snakeio::size_t game::impl::store_lobby_status(std::byte* out, tick_t tick,
-    std::span<const in_packet_info> in_packets) noexcept {
+snakeio::size_t game::impl::store_lobby_status(std::byte* out, std::span<const in_packet_info> in_packets) noexcept {
     std::byte* it = out;
     store_32(std::span<std::byte, 4>(it, 4), 2);
     it += 4;
     for (const in_packet_info& in_packet : in_packets) {
-        *(it++) = static_cast<std::byte>(in_packet.tick == tick);
+        *(it++) = static_cast<std::byte>(in_packet.tick == 0);
     }
     const size_t size = align(it - out);
     std::ranges::fill(it, out + size, std::byte(0));
@@ -259,7 +265,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
         for (id_t i = 0; i < game_max_sessions; ++i) {
             if (!game.sm_[i]) continue;
             session& session = impl_.sessions[i];
-            const tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed);
+            tick_t tick = std::atomic_ref(session.tick).load(std::memory_order::relaxed);
             in_packet_info in_packets_buffer[game_max_players];
             for (id_t j = 0; j < session.human_players; ++j) {
                 const client& client = impl_.clients[i][j];
@@ -299,8 +305,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     }
                 } else {
                     std::byte lobby_status_text[lobby_status_max_text_size];
-                    const size_t lobby_status_text_size =
-                        store_lobby_status(lobby_status_text, tick, in_packets);
+                    const size_t lobby_status_text_size = store_lobby_status(lobby_status_text, in_packets);
                     for (id_t j = 0; j < session.human_players; ++j) {
                         if (in_packets[j].tick != 0) continue;
                         send_packet(j, std::span(lobby_status_text, lobby_status_text_size));
@@ -319,7 +324,8 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     session.snakes[j].basic.angle = in_packet.angle;
                 }
                 // AIs play
-                for (snake& snake : session.ai_snakes_view()) {
+                for (snake& snake : session.snakes_view()) {
+                    if (!snake.basic.alive || snake.basic.human) continue;
                     const vector2d head = snake.segments[0];
                     const scalar_t sightrange = snake.basic.speed * 32;
                     // Forward bias
@@ -339,9 +345,9 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     }
                     // Wall repulsion
                     const scalar_t wall_mass = snake.basic.speed * 10;
-                    const auto get_wall_field = [](scalar_t pos, scalar_t length) noexcept {
+                    const auto get_wall_field = [&](scalar_t pos, scalar_t length) noexcept {
                         const scalar_t dist = length - pos;
-                        return 1 / (pos + epsilon) - 1 / (dist + epsilon);
+                        return 1 / (pos - snake.basic.width + epsilon) - 1 / (dist - snake.basic.width + epsilon);
                     };
                     force[0] += wall_mass * get_wall_field(head[0], session.width);
                     force[1] += wall_mass * get_wall_field(head[1], session.height);
@@ -379,7 +385,8 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 for (snake& snake : session.snakes_view()) {
                     if (!snake.basic.alive) continue;
                     const vector2d head = snake.segments.front();
-                    if (head[0] < 0 || head[0] > session.width || head[1] < 0 || head[1] > session.height) {
+                    if (head[0] < snake.basic.width || head[0] > session.width - snake.basic.width ||
+                        head[1] < snake.basic.width || head[1] > session.height - snake.basic.width) {
                         erase_snake(snake);
                         continue;
                     }
@@ -450,13 +457,15 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 send_packet(j, text);
             }
             // Check for game end
-            if (tick >= session.max_tick) {
+            if (++tick > session.max_tick ||
+                std::ranges::none_of(session.snakes_view(), [](const snake& s) { return s.basic.alive; })) {
                 std::byte termination_text[termination_max_text_size];
                 const size_t termination_text_size = store_termination(termination_text, session);
                 for (id_t j = 0; j < session.human_players; ++j) {
                     send_packet(j, std::span(termination_text, termination_text_size));
                 }
                 game.sm_.deallocate(i);
+                logger::debug("Session {} ended", i);
                 continue;
             }
             // Increment tick

@@ -2,7 +2,6 @@
 #include "config.hpp"
 #include "vector.hpp"
 #include <array>
-#include <algorithm>
 #include <span>
 
 namespace snakeio {
@@ -12,6 +11,7 @@ namespace snakeio {
         size_t length;
         score_t score;
         bool alive, human;
+        unsigned char padding[2];
     };
     struct snake {
         snake_basic basic;

@@ -1,11 +1,14 @@
 import sodium from "libsodium-wrappers";
 import {invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
+import {PACKET_CHUNK_SIZE} from "./config.ts";
 
 await sodium.ready;
 
-const PACKET_CHUNK_SIZE = 1024;
-
+export type Packet = {
+    tick: number;
+    data: Uint8Array;
+};
 export class PacketManager {
     #session_id = -1;
     #player_id = -1;
@@ -14,7 +17,7 @@ export class PacketManager {
     #tick = -1;
     #buffer: Uint8Array | undefined = undefined;
     #recv = 0;
-    #listeners = new Set<(tick: number, data: Uint8Array) => void>();
+    #listeners = new Set<(packet: Packet) => void>();
     #unlisten = () => {};
     constructor() {
         listen("recv_packet", this.#listener).then(unlisten => this.#unlisten = unlisten);
@@ -95,16 +98,16 @@ export class PacketManager {
             }
             this.#buffer!.set(decrypted, chunk_id * PACKET_CHUNK_SIZE);
             if (++this.#recv == total_chunks) {
-                this.#listeners.forEach(listener => listener(tick, this.#buffer!));
+                this.#listeners.forEach(listener => listener({tick, data: this.#buffer!}));
             }
         } catch (e) {
             console.error(e, packet);
         }
     }
-    add_listener(listener: (tick: number, data: Uint8Array) => void) {
+    add_listener(listener: (packet: Packet) => void) {
         this.#listeners.add(listener);
     }
-    remove_listener(listener: (tick: number, data: Uint8Array) => void) {
+    remove_listener(listener: (packet: Packet) => void) {
         this.#listeners.delete(listener);
     }
 }
