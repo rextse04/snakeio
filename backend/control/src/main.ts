@@ -1,5 +1,5 @@
 import {createServer} from "http";
-import {CONTROL_PLANE_EXT_PORT, GAME_MAX_PLAYERS, KEY_LEN} from "./config.js";
+import {CONTROL_PLANE_EXT_PORT, GAME_MAX_PLAYERS, GAME_MAX_TICK, KEY_LEN} from "./config.js";
 import {type WebSocket, WebSocketServer} from "ws";
 import {lobby, LobbyPlayer, LobbyRoom, PlayerRole} from "./lobby.js";
 import type {Player} from "./player.js";
@@ -56,6 +56,29 @@ function broadcast(player: Player, msg: any) {
 function broadcast_room(room: LobbyRoom, msg: any) {
     for (let player of room.players) {
         player.info.ws.send(msg);
+    }
+}
+function set_numeric_field(ws: WebSocket, result: [LobbyRoom, LobbyPlayer, LobbyPlayer], msg: any,
+                           min = -Infinity, max = Infinity) {
+    const value = Math.floor(msg.value);
+    if (!isFinite(value)) {
+        ws.send(JSON.stringify({
+            ...msg,
+            error: "Invalid ai_players."
+        }));
+    } else if (value < min || value > max) {
+        ws.send(JSON.stringify({
+            ...msg,
+            error: "The total number of players exceeds the maximum."
+        }));
+    } else {
+        // @ts-ignore
+        result[0][msg.field] = value;
+        broadcast_room(result[0], JSON.stringify({
+            type: "room_set",
+            field: msg.field,
+            value: value
+        }));
     }
 }
 wss.on("error", err => console.error(err));
@@ -165,7 +188,7 @@ wss.on("connection", (ws: PlayerSocket) => {
             }
             case "room_set": {
                 const result =
-                    room_op_check(ws, msg, PlayerRole.OWNER);
+                    room_op_check(ws, msg, PlayerRole.ADMIN);
                 if (result) {
                     if (result[0].started) {
                         ws.send(JSON.stringify({
@@ -184,25 +207,11 @@ wss.on("connection", (ws: PlayerSocket) => {
                             break;
                         }
                         case "ai_players": {
-                            const ai_players = parseInt(msg.value);
-                            if (isNaN(ai_players) || ai_players < 0) {
-                                ws.send(JSON.stringify({
-                                    ...msg,
-                                    error: "Invalid ai_players."
-                                }));
-                            } else if (result[0].human_players + ai_players > GAME_MAX_PLAYERS) {
-                                ws.send(JSON.stringify({
-                                    ...msg,
-                                    error: "The total number of players exceeds the maximum."
-                                }));
-                            } else {
-                                result[0].ai_players = ai_players;
-                                broadcast_room(result[0], JSON.stringify({
-                                    type: "room_set",
-                                    field: "ai_players",
-                                    value: ai_players
-                                }));
-                            }
+                            set_numeric_field(ws, result, msg, 0, GAME_MAX_PLAYERS - result[0].human_players);
+                            break;
+                        }
+                        case "max_tick": {
+                            set_numeric_field(ws, result, msg, 0, GAME_MAX_TICK);
                             break;
                         }
                         default: {
@@ -237,7 +246,7 @@ wss.on("connection", (ws: PlayerSocket) => {
                         }));
                         return;
                     }
-                    control_port.new_session(result[0].token, result[0].human_players, result[0].ai_players, buffer)
+                    control_port.new_session(result[0].summary(), buffer)
                         .then(session_id => {
                             for (let i = 0; i < result[0].players.length; i++) {
                                 const player = result[0].players[i]!;

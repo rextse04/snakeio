@@ -1,5 +1,5 @@
 import GameState, {Point} from "./engine.ts";
-import {useCallback, useEffect, useRef, useState} from "react";
+import {RefObject, useCallback, useEffect, useRef, useState} from "react";
 import render from "./render.ts";
 
 export enum ScreenFocusType {
@@ -23,10 +23,26 @@ export class ScreenFocus {
     }
 }
 
-export default function useGameDisplay
-    <ContainerT extends HTMLElement, GameStateT extends GameState = GameState>(
-    {initGameState, initFocus}:
-    {initGameState?: GameStateT, initFocus?: ScreenFocus}) {
+export default function useGameDisplay<
+    ContainerT extends HTMLElement,
+    GameStateT extends GameState = GameState
+>({
+    initGameState,
+    initFocus,
+    initRenderState,
+    reconcile = (gameState, renderState) => {
+        renderState.current = gameState.current;
+    }
+}: {
+    initGameState?: GameStateT,
+    initFocus?: ScreenFocus,
+    initRenderState?: GameState,
+    reconcile?: (
+        gameState: RefObject<GameStateT | undefined>,
+        renderState: RefObject<GameState | undefined>,
+        gameGap: number, renderGap: number
+    ) => void
+}) {
     const containerRef = useRef<ContainerT>(null);
     const hexCanvasRef = useRef<HTMLCanvasElement>(null);
     const foodCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -37,6 +53,13 @@ export default function useGameDisplay
     const [screenHeight, setScreenHeight] = useState(0);
     const gameState = useRef<GameStateT>(initGameState);
     const screenFocus = useRef(initFocus);
+    const realFocus = useRef<Point>(undefined);
+
+    const renderState = useRef<GameState>(initRenderState);
+    const gameLastTick = useRef(-1);
+    const gameLastTickTime = useRef<DOMHighResTimeStamp>(0);
+    const renderLastTick = useRef(-1);
+    const renderLastTickTime = useRef<DOMHighResTimeStamp>(0);
 
     useEffect(() => {
         if (!containerRef.current) {
@@ -58,7 +81,7 @@ export default function useGameDisplay
         if (!screenFocus.current) return undefined;
         switch (screenFocus.current.type) {
             case ScreenFocusType.SNAKE: {
-                return gameState.current?.snakes[screenFocus.current.asSnakeIndex()].segments[0];
+                return renderState.current?.snakes[screenFocus.current.asSnakeIndex()].segments[0];
             }
             case ScreenFocusType.POINT: {
                 return screenFocus.current.asPoint();
@@ -68,7 +91,21 @@ export default function useGameDisplay
     useEffect(() => {
         let animationFrameId: number;
         const loop = () => {
-            if (gameState.current) {
+            const now = performance.now();
+            const gameTick = gameState.current?.tick;
+            if (gameTick && gameTick > gameLastTick.current) {
+                gameLastTick.current = gameTick;
+                gameLastTickTime.current = now;
+            }
+            reconcile(gameState, renderState, now - gameLastTickTime.current, now - renderLastTickTime.current);
+            const renderTick = renderState.current?.tick;
+            if (renderTick && renderTick > renderLastTick.current) {
+                renderLastTick.current = renderTick;
+                renderLastTickTime.current = now;
+            }
+            if (renderState.current) {
+                const focus = getFocus();
+                if (focus) realFocus.current = focus;
                 render({
                     width: screenWidth,
                     height: screenHeight,
@@ -76,7 +113,7 @@ export default function useGameDisplay
                     food: foodCanvasRef.current,
                     snake: snakeCanvasRef.current,
                     map: mapCanvasRef.current
-                }, gameState.current, getFocus());
+                }, renderState.current, realFocus.current);
             }
             animationFrameId = requestAnimationFrame(loop);
         };
@@ -85,6 +122,6 @@ export default function useGameDisplay
     }, [screenWidth, screenHeight]);
     return {
         containerRef, hexCanvasRef, foodCanvasRef, snakeCanvasRef, mapCanvasRef,
-        screenWidth, screenHeight, bgState: gameState, screenFocus, getFocus
+        screenWidth, screenHeight, gameState, screenFocus, realFocus, renderState
     } as const;
 }

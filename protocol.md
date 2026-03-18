@@ -43,7 +43,7 @@ This document does not cover the WebSocket protocol due to rapid changes in feat
    - Player ID
    - Number of players and their usernames
    - Unique key for encryption
-4. Clients send (true, 0) to 50003 to join the lobby.
+4. Clients send (true, NaN) to 50003 to join the lobby.
 5. 50003 sends lobby status to clients at regular intervals.
 Clients need to respond with (true, 0) until all players have joined.
 6. After all players have joined, 50003 sends the initial game snapshot to all clients.
@@ -70,8 +70,11 @@ No arguments. No response.
 | session_token | char[5]  | 5                  | ASCII token provided by the control client.  |
 | human_players | unsigned | 1                  | Number of human players requested.           |
 | ai_players    | unsigned | 1                  | Number of AI players requested.              |
+| max_tick      | unsigned | 4                  | Maximum tick number before termination.      |
 | keys          | byte[]   | 32 * human_players | Array of 32-byte keys for each human player. |
 Always responds.
+- Although it is recommended for the client to validate fields before sending,
+it is the server's responsibility to validate all fields and respond with appropriate error code if any field is invalid.
 
 ## Server to Client (50002 -> 50001)
 If the client sends a command that requires a response, the server responds with the following packet:
@@ -82,12 +85,12 @@ If the client sends a command that requires a response, the server responds with
 | args  | -        | variable | See below.  |
 
 ### New Session Token (1)
-| Field         | Type     | Size | Description                                                    |
-|---------------|----------|------|----------------------------------------------------------------|
-| session_token | char[5]  | 5    | Non-NUL-terminated ASCII token provided by the control client. |
-| result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: unknown error.    |
-| padding       | -        | 1    | Padding.                                                       |
-| session_id    | unsigned | 4    | Session ID assigned to session_token.                          |
+| Field         | Type     | Size | Description                                                                      |
+|---------------|----------|------|----------------------------------------------------------------------------------|
+| session_token | char[5]  | 5    | Non-NUL-terminated ASCII token provided by the control client.                   |
+| result        | unsigned | 1    | 0: ok, 1: no memory, 2: too many players, 3: max tick too big, 4: unknown error. |
+| padding       | -        | 1    | Padding.                                                                         |
+| session_id    | unsigned | 4    | Session ID assigned to session_token.                                            |
 Size = 12
 
 - The server simply echos the session_token back to the client.
@@ -103,7 +106,7 @@ The control client is responsible for defining the requirements for and sanitizi
 | angle              | float | 4    | Update to player's angle.                               |
 Size = 8
 
-- The server must reject if angle is not finite.
+- If angle is not finite, the current angle is kept.
 
 ## Server to Client
 | Field         | Type         | Size     | Description                                            |

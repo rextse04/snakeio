@@ -27,10 +27,11 @@ namespace snakeio {
         enum class add_session_error : unsigned char {
             no_memory = 1,
             too_many_players,
+            max_tick_too_big,
             unknown_error
         };
         std::expected<id_t, add_session_error> add_session(
-            id_t human_players, id_t ai_players, std::span<const key_t> keys) noexcept;
+            id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept;
         void bind(std::stop_token stop_token, int sock) noexcept;
         template <typename Self>
         constexpr utils::follow_t<Self, impl&> get_impl(this Self&& self) noexcept {

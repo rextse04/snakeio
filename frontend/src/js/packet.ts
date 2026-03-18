@@ -18,12 +18,8 @@ export class PacketManager {
     #buffer: Uint8Array | undefined = undefined;
     #recv = 0;
     #listeners = new Set<(packet: Packet) => void>();
-    #unlisten = () => {};
     constructor() {
-        listen("recv_packet", this.#listener).then(unlisten => this.#unlisten = unlisten);
-    }
-    destructor() {
-        this.#unlisten();
+        listen("recv_packet", this.#listener);
     }
     set(session_id: number, player_id: number, key: Uint8Array) {
         if (key.length !== 32) {

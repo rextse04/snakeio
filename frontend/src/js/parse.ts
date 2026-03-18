@@ -1,15 +1,45 @@
 import {FOOD_SIZE, SEGMENT_SIZE, SNAKE_BASIC_SIZE} from "./config.ts";
 import {Packet} from "./packet.ts";
-import GameState, {DeltaEvent, Food, GameEvent, Point, SnakeBasic, SnapshotEvent, TerminationEvent} from "./engine.ts";
+import GameState, {
+    DeltaEvent, EventApplyResult, EventApplyResultType,
+    Food,
+    GameEvent,
+    Point,
+    SnakeBasic,
+    SnapshotEvent,
+    TerminationEvent,
+    TickPolicyType
+} from "./engine.ts";
 
 export enum PacketType {
     DELTA = 0,
     SNAPSHOT = 1,
-    TERMINATION = 3
+    TERMINATION = 3,
+    UNKNOWN = -1,
+    INVALID = -2
 }
-export interface NetworkEvent extends GameEvent {
-    type: PacketType;
+export class UnknownPacketEvent extends GameEvent {
+    constructor(tick: number) {
+        super(TickPolicyType.INCREMENTAL, tick);
+    }
+    protected doApply(_state: GameState | undefined): EventApplyResult {
+        return {type: EventApplyResultType.NO_BASELINE};
+    }
 }
+export class InvalidPacketEvent extends GameEvent {
+    constructor(tick: number) {
+        super(TickPolicyType.DEFINITION, tick);
+    }
+    protected doApply(_state: GameState | undefined): EventApplyResult {
+        return {type: EventApplyResultType.INVALID};
+    }
+}
+export type ParseResult =
+    | {type: PacketType.DELTA, event: DeltaEvent}
+    | {type: PacketType.SNAPSHOT, event: SnapshotEvent}
+    | {type: PacketType.TERMINATION, event: TerminationEvent}
+    | {type: PacketType.UNKNOWN, event: UnknownPacketEvent}
+    | {type: PacketType.INVALID, event: InvalidPacketEvent};
 
 function parseSnakeBasic(view: DataView, offset: number) {
     const speed = view.getFloat32(offset, true);
@@ -33,16 +63,19 @@ function parseFood(view: DataView, offset: number) {
         nextOffset: offset + FOOD_SIZE
     };
 }
-export default function parsePacket(state: GameState | undefined, {tick, data}: Packet) : NetworkEvent | undefined {
+
+export default function parsePacket({tick, data}: Packet, players?: number) : ParseResult {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const type = view.getUint32(0, true);
-    let event: GameEvent;
     switch (type) {
         case PacketType.DELTA: {
-            if (!state) return undefined;
+            if (!players) return {
+                type: PacketType.UNKNOWN,
+                event: new UnknownPacketEvent(tick)
+            };
             const snakeBasics: SnakeBasic[] = [];
             let offset = 4;
-            for (let i = 0; i < state.snakes.length; i++) {
+            for (let i = 0; i < players; i++) {
                 const {basic, nextOffset} = parseSnakeBasic(view, offset);
                 snakeBasics[i] = basic;
                 offset = nextOffset;
@@ -68,11 +101,13 @@ export default function parsePacket(state: GameState | undefined, {tick, data}: 
                 offset += 8;
             }
 
-            event = new DeltaEvent(tick, snakeBasics, foodsAdded, foodsRemoved) as unknown as NetworkEvent;
-            break;
+            return {
+                type: PacketType.DELTA,
+                event: new DeltaEvent(tick, snakeBasics, foodsAdded, foodsRemoved)
+            };
         }
         case PacketType.SNAPSHOT: {
-            const snapshot = new SnapshotEvent(
+            const event = new SnapshotEvent(
                 tick,
                 view.getFloat32(4, true),
                 view.getFloat32(8, true),
@@ -82,7 +117,7 @@ export default function parsePacket(state: GameState | undefined, {tick, data}: 
             );
 
             let offset = 20;
-            for (let i = 0; i < snapshot.snakes.length; i++) {
+            for (let i = 0; i < event.snakes.length; i++) {
                 const {basic, nextOffset} = parseSnakeBasic(view, offset);
                 offset = nextOffset;
                 const segments: Point[] = [];
@@ -93,39 +128,44 @@ export default function parsePacket(state: GameState | undefined, {tick, data}: 
                     };
                     offset += SEGMENT_SIZE;
                 }
-                snapshot.snakes[i] = {...basic, segments};
+                event.snakes[i] = {...basic, segments};
             }
 
             const foodsSize = view.getUint32(offset, true);
             offset += 4;
             for (let i = 0; i < foodsSize; i++) {
                 const {food, nextOffset} = parseFood(view, offset);
-                snapshot.foods[i] = food;
+                event.foods[i] = food;
                 offset = nextOffset;
             }
 
-            event = snapshot;
+            return {type: PacketType.SNAPSHOT, event};
             break;
         }
         case PacketType.TERMINATION: { // termination
-            if (!state) return undefined;
+            if (!players) return {
+                type: PacketType.UNKNOWN,
+                event: new UnknownPacketEvent(tick)
+            };
             const snakeBasics: SnakeBasic[] = [];
             let offset = 4;
-            for (let i = 0; i < state.snakes.length; i++) {
+            for (let i = 0; i < players; i++) {
                 const {basic, nextOffset} = parseSnakeBasic(view, offset);
-                snakeBasics[i] = {...state.snakes[i], ...basic};
+                snakeBasics[i] = basic;
                 offset = nextOffset;
             }
 
-            event = new TerminationEvent(tick, snakeBasics);
-            break;
+            return {
+                type: PacketType.TERMINATION,
+                event: new TerminationEvent(tick, snakeBasics)
+            }
         }
         default: {
             console.error("Unknown packet type", type, data);
-            return undefined;
+            return {
+                type: PacketType.INVALID,
+                event: new InvalidPacketEvent(tick)
+            }
         }
     }
-    const out = event as unknown as NetworkEvent;
-    out.type = type;
-    return out;
 }

@@ -1,6 +1,6 @@
 import React, {useMemo} from "react";
 import {SnakeBasic} from "./Game.tsx";
-import {LobbyRoom, username_of} from "./Lobby.tsx";
+import {LobbyRoom, usernameOf} from "./Lobby.tsx";
 import GameControl from "./GameControl.tsx";
 
 function rank_text(rank: number) {
@@ -32,7 +32,7 @@ export default function Termination({room, basics}: {room: LobbyRoom, basics: Sn
             <tbody>
             {basics_.map((basic, idx) => <tr key={idx}>
                 <td>{rank_text(idx+1)}</td>
-                <td>{username_of(room, basic.player_id)}</td>
+                <td>{usernameOf(room, basic.player_id)}</td>
                 <td>{basic.score}</td>
                 <td>{basic.alive ? "✅️" : "❌️"}</td>
             </tr>)}

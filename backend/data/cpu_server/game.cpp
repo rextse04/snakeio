@@ -26,7 +26,7 @@ game::game() : memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::by
 }
 
 std::expected<id_t, game::add_session_error> game::add_session(
-    id_t human_players, id_t ai_players, std::span<const key_t> keys) noexcept {
+    id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     using enum add_session_error;
     impl& impl_ = get_impl();
     auto session_id = sm_.allocate();
@@ -40,10 +40,13 @@ std::expected<id_t, game::add_session_error> game::add_session(
         return std::unexpected(too_many_players);
     }
     session.tick = 0;
-    session.max_tick = game_max_tick;
+    if (max_tick > game_max_tick) [[unlikely]] {
+        return std::unexpected(max_tick_too_big);
+    }
+    session.max_tick = max_tick;
     session.width = game_width_psqp * std::sqrt(static_cast<scalar_t>(session.players));
     session.height = game_height_psqp * std::sqrt(static_cast<scalar_t>(session.players));
-    std::uniform_real_distribution<scalar_t> angle_dist(0, M_PI * 2);
+    std::uniform_real_distribution<scalar_t> angle_dist(-M_PI, M_PI);
     std::uniform_real_distribution<scalar_t> width_dist(0, session.width), height_dist(0, session.height);
     for (id_t i = 0; i < session.players; ++i) {
         // sync not needed here because session is still inactive
@@ -143,15 +146,10 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
         }
         packet.decrypt(client.key);
         const scalar_t angle = load_float32(packet.text().subspan<4, 4>());
-        if (!std::isfinite(angle)) [[unlikely]] {
-            logger::debug("Received packet with invalid angle ({}) from {}.", angle, client_addr);
-            logger::print_packet(logger::debug, packet.bytes());
-            continue;
-        }
         client.last_packet = {
             .addr = client_addr,
             .snapshot_requested = static_cast<bool>(packet.text()[0]),
-            .angle = load_float32(packet.text().subspan<4, 4>())
+            .angle = std::isfinite(angle) ? angle : session.snakes[packet.player_id()].basic.angle,
         };
         std::atomic_ref(client.tick).store(tick, std::memory_order::release);
     }
@@ -293,7 +291,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     data_packet chunk_packet(buffer, chunk.size() + data_packet::header_size);
                     std::ranges::copy(chunk, chunk_packet.text().begin());
                     chunk_packet.encrypt(client.key);
-                    sendto(sock, chunk_packet.bytes(), client.last_packet.addr);
+                    sendto(sock, chunk_packet.bytes(), in_packets[player_id].addr);
                     packet.chunk_id(packet.chunk_id() + 1);
                 }
             };

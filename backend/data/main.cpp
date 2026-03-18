@@ -57,13 +57,14 @@ static void control_port(std::stop_source stop_source, int sock) {
                 return;
             }
             case 1: { // new session token
-                constexpr std::size_t header_size = 1 + 5 + 1 + 1;
+                constexpr std::size_t header_size = 1 + 5 + 1 + 1 + 4;
                 if (recv_len < header_size) {
                     goto invalid_format;
                 }
                 const std::string_view token(reinterpret_cast<char*>(buffer + 1), 5);
                 const auto human_players = static_cast<unsigned char>(buffer[6]),
                     ai_players = static_cast<unsigned char>(buffer[7]);
+                const tick_t max_tick = load_32(std::span<const std::byte, 4>(buffer + 8, 4));
                 if (recv_len < header_size + human_players * sizeof(snakeio::key_t)) {
                     goto invalid_format;
                 }
@@ -72,7 +73,7 @@ static void control_port(std::stop_source stop_source, int sock) {
                 // 2. storage is given by an array of unsigned char
                 // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
                 const auto keys = reinterpret_cast<const snakeio::key_t*>(buffer + header_size);
-                const auto id = game_.add_session(human_players, ai_players, std::span(keys, human_players));
+                const auto id = game_.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
                 if (id.has_value()) {
                     logger::debug("Session token {} mapped to session ID {}.", token, id.value());
                     buffer[6] = std::byte(0);
@@ -87,6 +88,10 @@ static void control_port(std::stop_source stop_source, int sock) {
                         }
                         case too_many_players: {
                             error = "too many players";
+                            break;
+                        }
+                        case max_tick_too_big: {
+                            error = "max tick too big";
                             break;
                         }
                         case unknown_error: {

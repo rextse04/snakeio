@@ -36,7 +36,9 @@ export function getFoodColor(width: number) {
 }
 
 export const GAME_MAX_WIDTH = 32768,
-    GAME_MAX_HEIGHT = 16784;
+    GAME_MAX_HEIGHT = 16784,
+    TICK_RATE_MS = 20,
+    GAME_MAX_TICK = 15000;
 export const SNAKE_BASIC_SIZE = 24,
     SEGMENT_SIZE = 8,
     FOOD_SIZE = 12,

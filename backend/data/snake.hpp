@@ -11,7 +11,6 @@ namespace snakeio {
         size_t length;
         score_t score;
         bool alive, human;
-        unsigned char padding[2];
     };
     struct snake {
         snake_basic basic;

@@ -29,7 +29,7 @@ namespace snakeio {
             }
         }
         // See avail_size() for the approximation of the available size.
-        constexpr id_t active_size() const noexcept {
+        constexpr id_t in_use_size() const noexcept {
             return IDBound - avail_size();
         }
         // Approximation of the available size.

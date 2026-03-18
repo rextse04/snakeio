@@ -24,7 +24,7 @@ function genTarget(width: number, height: number): Point {
 export default function LobbyBackground() {
     const {
         containerRef, hexCanvasRef, foodCanvasRef, snakeCanvasRef,
-        screenWidth, screenHeight, bgState, getFocus
+        screenWidth, screenHeight, gameState, realFocus
     } = useGameDisplay<HTMLDivElement, BackgroundState>({
         initFocus: new ScreenFocus(ScreenFocusType.SNAKE, 0)
     });
@@ -74,7 +74,7 @@ export default function LobbyBackground() {
         for (let i = 0; i < snakes.length; ++i) {
             targets[i] = genTarget(width, height);
         }
-        bgState.current = {
+        gameState.current = {
             tick: 0,
             width: width,
             height: height,
@@ -87,44 +87,47 @@ export default function LobbyBackground() {
 
     useEffect(() => {
         const id = setInterval(() => {
-            if (!bgState.current) return;
-            const tick = bgState.current.tick;
-            const snakes = bgState.current.snakes;
+            if (!gameState.current) return;
+            const tick = gameState.current.tick;
+            const snakes = gameState.current.snakes;
+            const e = 1e-3;
             for (let i = 0; i < snakes.length; ++i) {
                 const snake = snakes[i];
                 const head = snake.segments[0];
-                const target = bgState.current.targets[i];
+                const target = gameState.current.targets[i];
                 let dx = target.x - head.x;
                 let dy = target.y - head.y;
                 if (tick % 512 === 0 || dx*dx + dy*dy < snake.width*snake.width) {
-                    const new_target = genTarget(bgState.current.width, bgState.current.height);
+                    const new_target = genTarget(gameState.current.width, gameState.current.height);
                     target.x = new_target.x;
                     target.y = new_target.y;
                 }
                 dx = target.x - head.x;
                 dy = target.y - head.y;
-                let mdx = 0, mdy = 0;
-                if (pointerOffset.current) {
-                    const focus = getFocus()!;
+                const d = Math.sqrt(dx*dx + dy*dy) + e;
+                dx /= d; dy /= d;
+                let mc = 500, mdx = 0, mdy = 0;
+                if (i !== 0 && pointerOffset.current) {
+                    const focus = realFocus.current;
+                    if (!focus) continue;
                     mdx = focus.x + pointerOffset.current.x - head.x;
                     mdy = focus.y + pointerOffset.current.y - head.y;
+                    const m2 = mdx*mdx + mdy*mdy + e;
+                    mdx /= m2; mdy /= m2;
+                    if (m2 < 100**2) mc *= -1;
                 }
-                const d = Math.sqrt(dx*dx + dy*dy);
-                dx /= d; dy /= d;
-                const m = Math.sqrt(mdx*mdx + mdy*mdy);
-                mdx /= m; mdy /= m;
-                const new_angle = Math.atan2(dy + mdy * 0.5, dx + mdx * 0.5);
+                const new_angle = Math.atan2(dy + mdy * mc, dx + mdx * mc);
                 snake.angle += clamp(angleDelta(new_angle, snake.angle), -Math.PI / 100, Math.PI / 100);
             }
             const foodsAdded: Food[] = [];
             const foodsRemoved: Point[] = [];
             if (tick % 8 === 0) {
-                foodsAdded.push(genFood(bgState.current.width, bgState.current.height));
-                const foods = bgState.current.foods;
+                foodsAdded.push(genFood(gameState.current.width, gameState.current.height));
+                const foods = gameState.current.foods;
                 const removed = foods.keys().next().value;
                 if (removed) foodsRemoved.push(decodeKey(removed));
             }
-            new DeltaEvent(tick + 1, snakes, foodsAdded, foodsRemoved).apply(bgState.current);
+            new DeltaEvent(tick + 1, snakes, foodsAdded, foodsRemoved).apply(gameState.current);
         }, 20);
         return () => clearInterval(id);
     }, []);

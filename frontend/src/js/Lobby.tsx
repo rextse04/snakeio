@@ -5,6 +5,7 @@ import {Packet, packet_manager, PacketManager} from "./packet.ts";
 import Game from "./Game.tsx";
 import LobbyBackground from "./LobbyBackground.tsx";
 import "../css/Lobby.css";
+import {GAME_MAX_TICK, TICK_RATE_MS} from "./config.ts";
 
 export enum PlayerRole {
     MEMBER = 0,
@@ -23,19 +24,20 @@ export type LobbyRoom = {
     players: Player[];
     is_public?: boolean;
     ai_players?: number;
+    max_tick?: number;
 };
 
-export function all_players(room: LobbyRoom) {
+export function allPlayers(room: LobbyRoom) {
     return room.players.length + (room.ai_players || 0);
 }
-export function username_of(room: LobbyRoom, player_id: number) {
+export function usernameOf(room: LobbyRoom, player_id: number) {
     if (player_id < room.players.length) {
         return room.players[player_id].username;
     } else {
         return "AI " + (player_id - room.players.length + 1);
     }
 }
-function role_name(role: PlayerRole) {
+function roleName(role: PlayerRole) {
     switch (role) {
         case PlayerRole.MEMBER: return "member";
         case PlayerRole.AI: return "AI";
@@ -57,7 +59,7 @@ function LobbyPlayer({wsRef, room, user, player, disabled = false}:
     const onRoleChange = () => {
         const target =
             (player.role === PlayerRole.ADMIN) ? PlayerRole.MEMBER : PlayerRole.ADMIN;
-        if (!confirm("Are you sure you want to change " + player.username + "'s role to " + role_name(target) + "?"))
+        if (!confirm("Are you sure you want to change " + player.username + "'s role to " + roleName(target) + "?"))
             return;
         wsRef.current?.send(JSON.stringify({
             type: "room_change_role",
@@ -217,7 +219,9 @@ export default function Lobby() {
                     }
                     const keep_alive = () => {
                         const packet = new ArrayBuffer(PacketManager.align(8));
-                        new DataView(packet).setUint8(0, 1);
+                        const view = new DataView(packet);
+                        view.setUint8(0, 1);
+                        view.setFloat32(4, NaN, true);
                         packet_manager.send(new Uint8Array(packet));
                     };
                     const listener = ({tick, data}: Packet) => {
@@ -229,11 +233,10 @@ export default function Lobby() {
                             return;
                         }
                         setRoom(room => {
-                            const players = room.players;
-                            for (let player_id = 0; player_id < players.length; ++player_id) {
-                                players[player_id].connected = view.getUint8(4 + player_id) === 1;
+                            for (const player of room.players) {
+                                player.connected = view.getUint8(4 + room.players.indexOf(player)) === 1;
                             }
-                            return {...room, players};
+                            return {...room};
                         });
                         keep_alive();
                     };
@@ -252,10 +255,11 @@ export default function Lobby() {
     }, []);
 
     const session_token_id = useId();
+    const max_tick_id = useId();
     const onUsernameChange = (e: any) => {
         setPlayer(player => ({
             ...player,
-            username: e.target.value
+            username: e.currentTarget.value
         }));
     };
     const onRegister = () => {
@@ -267,7 +271,7 @@ export default function Lobby() {
     const onTokenChange = (e: any) => {
         setRoom(room => ({
             ...room,
-            token: e.target.value
+            token: e.currentTarget.value
         }));
     };
     const onJoin = () => {
@@ -296,6 +300,13 @@ export default function Lobby() {
             value: room.ai_players! + 1
         }));
     };
+    const onMaxTickChange = (e: any) => {
+        wsRef.current?.send(JSON.stringify({
+            type: "room_set",
+            field: "max_tick",
+            value: e.currentTarget.value * 1000 / TICK_RATE_MS
+        }));
+    }
     const onStart = () => {
         roomRef.current = room;
         wsRef.current?.send(JSON.stringify({
@@ -320,29 +331,40 @@ export default function Lobby() {
                 <button disabled={started || room.players.length > 0} onClick={onJoin}>Join</button>
                 <button disabled={started || room.players.length > 0} onClick={onCreate}>Create</button>
             </div>
-            {room.players.length > 0 && <div className="lobby-room">
-                <div>
-                    <input type="checkbox" checked={room.is_public} onChange={onPublicChange} disabled={started} />
-                    <label htmlFor="lobby-room-public">Public</label>
-                    <div className="flex-spacer"></div>
-                    <button className="icon" onClick={onAiPlayersChange} disabled={started}>
-                        <i className="fa-solid fa-robot"></i>
-                    </button>
+            {room.players.length > 0 && <>
+                <div className="lobby-room">
+                    <div>
+                        <input type="checkbox" checked={room.is_public} onChange={onPublicChange}
+                               disabled={started || player.role! < PlayerRole.ADMIN} />
+                        <label htmlFor="lobby-room-public">Public</label>
+                        <div className="flex-spacer"></div>
+                        <button className="icon" onClick={onAiPlayersChange}
+                                disabled={started || player.role! < PlayerRole.ADMIN}>
+                            <i className="fa-solid fa-robot"></i>
+                        </button>
+                    </div>
+                    {room.players.map(teammate => (
+                        <LobbyPlayer key={teammate.server_id}
+                                     wsRef={wsRef} room={room} user={player} player={teammate} disabled={started} />
+                    ))}
+                    {[...function*() {
+                        for (let player_id = room.players.length; player_id < allPlayers(room); ++player_id) {
+                            yield <LobbyPlayer key={player_id} wsRef={wsRef} user={player} room={room} player={{
+                                server_id: -1,
+                                username: usernameOf(room, player_id),
+                                role: PlayerRole.AI
+                            }} disabled={started} />;
+                        }
+                    }()]}
                 </div>
-                {room.players.map(teammate => (
-                    <LobbyPlayer key={teammate.server_id}
-                                 wsRef={wsRef} room={room} user={player} player={teammate} disabled={started} />
-                ))}
-                {[...function*() {
-                    for (let player_id = room.players.length; player_id < all_players(room); ++player_id) {
-                        yield <LobbyPlayer key={player_id} wsRef={wsRef} user={player} room={room} player={{
-                            server_id: -1,
-                            username: username_of(room, player_id),
-                            role: PlayerRole.AI
-                        }} disabled={started} />;
-                    }
-                }()]}
-            </div>}
+                <div className="row-input">
+                    <label htmlFor={max_tick_id}>Game Time (s)</label>
+                    <input type="number" id={max_tick_id} className="main validated"
+                           min={0} max={GAME_MAX_TICK * TICK_RATE_MS / 1000} step={15}
+                           disabled={started || player.role! < PlayerRole.ADMIN}
+                           value={(room.max_tick || GAME_MAX_TICK) * TICK_RATE_MS / 1000} onChange={onMaxTickChange} />
+                </div>
+            </>}
         </div>
         <div className="divider"></div>
         <button className="start-btn" disabled={started || player.role !== PlayerRole.OWNER} onClick={onStart}>

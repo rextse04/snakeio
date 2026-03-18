@@ -1,5 +1,6 @@
 import {createSocket} from "dgram";
 import {CONTROL_PLANE_INT_PORT, DATA_PLANE_INT_PORT, GAME_MAX_PLAYERS, KEY_LEN} from "./config.js";
+import type {LobbyRoomSummary} from "./lobby.js";
 
 class CallBackMap extends Map<string, (buffer: Buffer) => void> {
     set(key: string, value: (buffer: Buffer) => void) : this {
@@ -37,19 +38,17 @@ class ControlPort {
         buffer[0] = 0;
         this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1");
     }
-    new_session(token: string, human_players: number, ai_players: number, keys: Uint8Array) {
-        const buffer = new Uint8Array(1 + 5 + 1 + 1 + human_players * KEY_LEN);
-        buffer[0] = 1;
+    new_session({token, players, ai_players, max_tick}: LobbyRoomSummary, keys: Uint8Array) {
+        const human_players = players.length - ai_players;
+        const buffer = new Uint8Array(1 + 5 + 1 + 1 + 4 + human_players * KEY_LEN);
+        const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        view.setUint8(0, 1);
         const enc = new TextEncoder();
         enc.encodeInto(token, buffer.subarray(1, 6));
-        buffer[6] = human_players;
-        buffer[7] = ai_players;
-        let buffer_pos = 8, keys_pos = 0;
-        for (let i = 0; i < human_players; i++) {
-            buffer.set(keys.subarray(keys_pos, keys_pos + KEY_LEN), buffer_pos);
-            buffer_pos += KEY_LEN;
-            keys_pos += KEY_LEN;
-        }
+        view.setUint8(6, human_players);
+        view.setUint8(7, ai_players);
+        view.setUint32(8, max_tick, true);
+        buffer.set(keys, 12);
         const promise = new Promise<number>((res, rej) => {
             this.#callbacks[1]!.set(token, (buffer: Buffer) => {
                 switch (buffer.readUInt8(6)) {

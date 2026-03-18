@@ -1,4 +1,4 @@
-import {GAME_MAX_PLAYERS, KEY_LEN, SESSION_TOKEN_LEN} from "./config.js";
+import {GAME_MAX_PLAYERS, GAME_MAX_TICK, KEY_LEN, SESSION_TOKEN_LEN} from "./config.js";
 import type {Player} from "./player.js";
 import type {Result} from "./utils.js";
 
@@ -7,6 +7,11 @@ export enum PlayerRole {
     ADMIN = 1,
     OWNER = 2
 }
+export interface LobbyPlayerSummary {
+    id: number;
+    username: string;
+    permission: PlayerRole;
+}
 export class LobbyPlayer {
     info: Player;
     role: PlayerRole;
@@ -14,7 +19,7 @@ export class LobbyPlayer {
         this.info = info;
         this.role = permission;
     }
-    summary() {
+    summary(): LobbyPlayerSummary {
         return {
             id: this.info.id,
             username: this.info.username,
@@ -23,20 +28,29 @@ export class LobbyPlayer {
     }
 }
 
+export interface LobbyRoomSummary {
+    token: string;
+    players: LobbyPlayerSummary[];
+    is_public: boolean;
+    ai_players: number;
+    max_tick: number;
+}
 export class LobbyRoom {
     #room_of: Map<number, [LobbyRoom, LobbyPlayer]>;
     token: string;
     players: Array<LobbyPlayer>;
     is_public: boolean;
     ai_players: number;
+    max_tick: number;
     started = false;
     constructor(room_of: Map<number, [LobbyRoom, LobbyPlayer]>, token: string, players: Array<LobbyPlayer>,
-                is_public = false, ai_players: number = 0) {
+                is_public = false, ai_players: number = 0, max_tick = GAME_MAX_TICK) {
         this.#room_of = room_of;
         this.token = token;
         this.players = players;
         this.is_public = is_public;
         this.ai_players = ai_players;
+        this.max_tick = max_tick;
     }
     get human_players() {
         return this.players.length;
@@ -58,11 +72,13 @@ export class LobbyRoom {
         this.players.splice(player_id);
         this.#room_of.delete(server_id);
     }
-    summary() {
+    summary(): LobbyRoomSummary {
         return {
+            token: this.token,
             players: this.players.map(player => player.summary()),
             is_public: this.is_public,
-            ai_players: this.ai_players
+            ai_players: this.ai_players,
+            max_tick: this.max_tick
         }
     }
 }
