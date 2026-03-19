@@ -9,16 +9,13 @@ use std::{
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri::ipc::{InvokeBody, Request};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
-    server_addr: String,
-
+    control_server_addr: String,
     debug_drop_outgoing_enabled: bool,
     /// 0.0 = never drop, 1.0 = always drop
     debug_drop_outgoing_chance: f64,
-
     debug_drop_incoming_enabled: bool,
     /// 0.0 = never drop, 1.0 = always drop
     debug_drop_incoming_chance: f64,
@@ -27,7 +24,7 @@ struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server_addr: "localhost:50003".to_string(),
+            control_server_addr: "ws://localhost:50000".to_string(),
             debug_drop_outgoing_enabled: false,
             debug_drop_outgoing_chance: 0.0,
             debug_drop_incoming_enabled: false,
@@ -96,24 +93,25 @@ fn should_drop_packet(enabled: bool, chance: f64) -> bool {
 }
 
 #[tauri::command]
-fn send_packet(state: State<UdpState>, request: Request<'_>) -> Result<(), String> {
-    let InvokeBody::Raw(data) = request.body() else {
-        return Err("Invalid request body".into());
-    };
+fn get_config(state: State<UdpState>) -> AppConfig {
+    (*state.config).clone()
+}
 
+#[tauri::command]
+fn send_packet(state: State<UdpState>, addr: String, data: Vec<u8>) -> Result<(), String> {
     // Simulate outgoing packet loss
     if should_drop_packet(
         state.config.debug_drop_outgoing_enabled,
         state.config.debug_drop_outgoing_chance,
     ) {
-        println!("[DEBUG] Dropped outgoing packet ({} bytes)", data.len());
+        println!("[DEBUG] Dropped outgoing packet to {} ({} bytes)", addr, data.len());
         return Ok(());
     }
 
     state
         .socket
-        .send(data)
-        .map_err(|e| e.to_string())?;
+        .send_to(&data, &addr)
+        .map_err(|e| format!("Failed to send UDP packet to {}: {e}", addr))?;
 
     Ok(())
 }
@@ -133,10 +131,6 @@ pub fn run() {
             let socket = UdpSocket::bind("0.0.0.0:0")
                 .map_err(|e| format!("Failed to bind UDP socket: {e}"))?;
 
-            socket
-                .connect(&config.server_addr)
-                .map_err(|e| format!("Failed to connect to server {}: {e}", config.server_addr))?;
-
             let socket = Arc::new(socket);
             let config = Arc::new(config);
 
@@ -151,14 +145,17 @@ pub fn run() {
                 let mut buf = [0u8; 1024 + 32];
 
                 loop {
-                    match recv_socket.recv(&mut buf) {
-                        Ok(len) => {
+                    match recv_socket.recv_from(&mut buf) {
+                        Ok((len, src_addr)) => {
                             // Simulate incoming packet loss
                             if should_drop_packet(
                                 recv_config.debug_drop_incoming_enabled,
                                 recv_config.debug_drop_incoming_chance,
                             ) {
-                                println!("[DEBUG] Dropped incoming packet ({} bytes)", len);
+                                println!(
+                                    "[DEBUG] Dropped incoming packet from {} ({} bytes)",
+                                    src_addr, len
+                                );
                                 continue;
                             }
 
@@ -181,7 +178,11 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![send_packet, exit_app])
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            send_packet,
+            exit_app
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

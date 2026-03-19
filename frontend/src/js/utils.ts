@@ -16,3 +16,14 @@ export function angleDelta(b: number, a: number) {
 export function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max);
 }
+
+export function formatMs(ms: number) {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    const milliseconds = Math.floor(ms % 1000);
+    return (
+        String(minutes).padStart(2, '0') + ':' +
+        String(seconds).padStart(2, '0') + ':' +
+        String(milliseconds).padStart(3, '0')
+    );
+}

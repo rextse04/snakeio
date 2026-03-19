@@ -1,11 +1,12 @@
 import React, {RefObject, useCallback, useContext, useEffect, useId, useRef, useState} from "react";
-import {UIContext, GameContext} from "./App.tsx";
+import {UIContext, GameContext, app_config} from "./App.tsx";
 import {invoke} from "@tauri-apps/api/core";
 import {Packet, packet_manager, PacketManager} from "./packet.ts";
 import Game from "./Game.tsx";
 import LobbyBackground from "./LobbyBackground.tsx";
+import GameConfig from "./config.ts";
 import "../css/Lobby.css";
-import {GAME_MAX_TICK, TICK_RATE_MS} from "./config.ts";
+import {useStateRef} from "./utils.ts";
 
 export enum PlayerRole {
     MEMBER = 0,
@@ -105,6 +106,7 @@ function LobbyPlayer({wsRef, room, user, player, disabled = false}:
 export default function Lobby() {
     const [, setGame] = useContext(GameContext);
     const [, setUI] = useContext(UIContext);
+    const [gameConfig, gameConfigRef, setGameConfig] = useStateRef<GameConfig | undefined>(undefined);
     const [player, setPlayer] = useState({
         server_id: -1,
         username: ""
@@ -122,7 +124,7 @@ export default function Lobby() {
 
     const wsRef = useRef(undefined as WebSocket | undefined);
     const connect = useCallback(() => {
-        const ws = new WebSocket("ws://localhost:50000");
+        const ws = new WebSocket(app_config.control_server_addr);
         ws.addEventListener("error", error => {
             console.error(error);
             if (confirm("Failed to connect to the server. Retry?")) {
@@ -138,6 +140,10 @@ export default function Lobby() {
                 return;
             }
             switch (msg.type) {
+                case "config": {
+                    setGameConfig(msg.config);
+                    break;
+                }
                 case "register": {
                     setPlayer(player => ({
                         ...player,
@@ -212,7 +218,8 @@ export default function Lobby() {
                 }
                 case "room_start": {
                     const error =
-                        packet_manager.set(msg.session_id, msg.player_id, Uint8Array.from(msg.key));
+                        packet_manager.set(gameConfigRef.current!.data_server_addr,
+                            msg.session_id, msg.player_id, Uint8Array.from(msg.key));
                     if (error) {
                         alert("Internal server error: " + error);
                         break;
@@ -228,7 +235,8 @@ export default function Lobby() {
                         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
                         if (view.getUint32(0, true) != 2) {
                             setUI(undefined);
-                            setGame(<Game room={roomRef.current!} first_packet={{tick, data}}/>)
+                            setGame(<Game config={gameConfigRef.current!}
+                                          room={roomRef.current!} first_packet={{tick, data}}/>)
                             packet_manager.remove_listener(listener);
                             return;
                         }
@@ -254,6 +262,7 @@ export default function Lobby() {
         return () => wsRef.current?.close();
     }, []);
 
+    const disabled = !gameConfig || started;
     const session_token_id = useId();
     const max_tick_id = useId();
     const onUsernameChange = (e: any) => {
@@ -304,7 +313,7 @@ export default function Lobby() {
         wsRef.current?.send(JSON.stringify({
             type: "room_set",
             field: "max_tick",
-            value: e.currentTarget.value * 1000 / TICK_RATE_MS
+            value: e.currentTarget.value * 1000 / gameConfigRef.current!.tick_rate_ms
         }));
     }
     const onStart = () => {
@@ -327,25 +336,25 @@ export default function Lobby() {
                        minLength={5} maxLength={5} pattern="[A-Za-z0-9]{5}"
                        title="A session token must consist of 5 alphanumeric characters."
                        value={room.token} onChange={onTokenChange}
-                       readOnly={started || room.players.length > 0} />
-                <button disabled={started || room.players.length > 0} onClick={onJoin}>Join</button>
-                <button disabled={started || room.players.length > 0} onClick={onCreate}>Create</button>
+                       readOnly={disabled || room.players.length > 0} />
+                <button disabled={disabled || room.players.length > 0} onClick={onJoin}>Join</button>
+                <button disabled={disabled || room.players.length > 0} onClick={onCreate}>Create</button>
             </div>
             {room.players.length > 0 && <>
                 <div className="lobby-room">
                     <div>
                         <input type="checkbox" checked={room.is_public} onChange={onPublicChange}
-                               disabled={started || player.role! < PlayerRole.ADMIN} />
+                               disabled={disabled || player.role! < PlayerRole.ADMIN} />
                         <label htmlFor="lobby-room-public">Public</label>
                         <div className="flex-spacer"></div>
                         <button className="icon" onClick={onAiPlayersChange}
-                                disabled={started || player.role! < PlayerRole.ADMIN}>
+                                disabled={disabled || player.role! < PlayerRole.ADMIN}>
                             <i className="fa-solid fa-robot"></i>
                         </button>
                     </div>
                     {room.players.map(teammate => (
                         <LobbyPlayer key={teammate.server_id}
-                                     wsRef={wsRef} room={room} user={player} player={teammate} disabled={started} />
+                                     wsRef={wsRef} room={room} user={player} player={teammate} disabled={disabled} />
                     ))}
                     {[...function*() {
                         for (let player_id = room.players.length; player_id < allPlayers(room); ++player_id) {
@@ -353,21 +362,22 @@ export default function Lobby() {
                                 server_id: -1,
                                 username: usernameOf(room, player_id),
                                 role: PlayerRole.AI
-                            }} disabled={started} />;
+                            }} disabled={disabled} />;
                         }
                     }()]}
                 </div>
                 <div className="row-input">
                     <label htmlFor={max_tick_id}>Game Time (s)</label>
-                    <input type="number" id={max_tick_id} className="main validated"
-                           min={0} max={GAME_MAX_TICK * TICK_RATE_MS / 1000} step={15}
-                           disabled={started || player.role! < PlayerRole.ADMIN}
-                           value={(room.max_tick || GAME_MAX_TICK) * TICK_RATE_MS / 1000} onChange={onMaxTickChange} />
+                    <input type="number" id={max_tick_id}
+                           min={0} max={gameConfig!.game_max_tick * gameConfig!.tick_rate_ms / 1000} step={15}
+                           disabled={disabled || player.role! < PlayerRole.ADMIN}
+                           value={(room.max_tick || gameConfig!.game_max_tick) * gameConfig!.tick_rate_ms / 1000}
+                           onChange={onMaxTickChange} />
                 </div>
             </>}
         </div>
         <div className="divider"></div>
-        <button className="start-btn" disabled={started || player.role !== PlayerRole.OWNER} onClick={onStart}>
+        <button className="start-btn" disabled={disabled || player.role !== PlayerRole.OWNER} onClick={onStart}>
             {started ? "Waiting..." : "Start!"}
         </button>
     </div>;

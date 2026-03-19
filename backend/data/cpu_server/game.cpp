@@ -247,7 +247,8 @@ snakeio::size_t game::impl::store_lobby_status(std::byte* out, std::span<const i
 snakeio::size_t game::impl::store_termination(std::byte* out, const session& session) noexcept {
     std::byte* it = out;
     store_32(std::span<std::byte, 4>(it, 4), 3);
-    it += 4;
+    store_32(std::span<std::byte, 4>(it + 4, 4), session.max_tick);
+    it += 8;
     for (const snake& snake : session.snakes_view()) {
         it = store_snake(it, snake);
     }

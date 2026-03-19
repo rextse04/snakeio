@@ -5,10 +5,10 @@ import {LobbyRoom, usernameOf} from "./Lobby.tsx";
 import GameOver from "./GameOver.tsx";
 import Termination from "./Termination.tsx";
 import parsePacket, {PacketType} from "./parse.ts";
-import {getSnakeColor, TICK_RATE_MS} from "./config.ts";
+import GameConfig, {getSnakeColor} from "./config.ts";
 import useGameDisplay, {ScreenFocus, ScreenFocusType} from "./GameDisplay.ts";
 import EventBuffer from "./EventBuffer.ts";
-import {useStateRef} from "./utils.ts";
+import {formatMs, useStateRef} from "./utils.ts";
 import GameState, {DeltaEvent} from "./engine.ts";
 import "../css/Game.css";
 
@@ -23,7 +23,8 @@ interface ScoreBoardItem {
     color: string;
 }
 
-export default function Game({room, first_packet}: {room: LobbyRoom, first_packet: Packet}) {
+export default function Game({config, room, first_packet}:
+                             {config: GameConfig, room: LobbyRoom, first_packet: Packet}) {
     const [, setUI] = useContext(UIContext);
     const [mode, modeRef, setMode] = useStateRef(Mode.GAME);
     const reconcile =
@@ -31,22 +32,22 @@ export default function Game({room, first_packet}: {room: LobbyRoom, first_packe
             gameState: RefObject<GameState | undefined>, renderState: RefObject<GameState | undefined>,
             gameGap: number, renderGap: number) => {
             if (!gameState.current) return;
-            if (modeRef.current === Mode.TERMINATION || !renderState.current || gameGap <= TICK_RATE_MS) {
+            if (modeRef.current === Mode.TERMINATION || !renderState.current || gameGap <= config.game_max_tick) {
                 renderState.current = gameState.current;
                 return;
             }
             if (gameState.current.tick >= renderState.current.tick) {
                 renderState.current = structuredClone(gameState.current);
             } else {
-                if (renderGap <= TICK_RATE_MS) return;
+                if (renderGap <= config.game_max_tick) return;
             }
+
             const state = renderState.current;
             renderState.current = new DeltaEvent(state.tick + 1, state.snakes, [], []).apply(state).state;
-            console.log("interpolated");
         }, []);
     const {
         containerRef, hexCanvasRef, foodCanvasRef, snakeCanvasRef, mapCanvasRef,
-        screenWidth, screenHeight, gameState, screenFocus, realFocus
+        screenWidth, screenHeight, gameState, screenFocus, realFocus, renderState
     } = useGameDisplay<HTMLDivElement>({
         initFocus: new ScreenFocus(ScreenFocusType.SNAKE, packet_manager.player_id),
         reconcile
@@ -65,6 +66,7 @@ export default function Game({room, first_packet}: {room: LobbyRoom, first_packe
     }, []);
     const eventHandler = useMemo(() => {
         const handler = new EventBuffer({
+            timeoutPerPacket: config.tick_rate_ms * 2,
             panic: () => {
                 sendPacket(true);
                 setPanic(true);
@@ -103,7 +105,7 @@ export default function Game({room, first_packet}: {room: LobbyRoom, first_packe
                 return;
             }
             sendPacket();
-        }, TICK_RATE_MS / 2);
+        }, config.tick_rate_ms / 2);
         return () => clearInterval(id);
     }, []);
 
@@ -162,6 +164,12 @@ export default function Game({room, first_packet}: {room: LobbyRoom, first_packe
         <canvas ref={snakeCanvasRef} className="snake" height={screenHeight} width={screenWidth}></canvas>
         <canvas ref={mapCanvasRef} className="map" height={screenHeight / 8} width={screenWidth / 8}
                 onClick={(mode === Mode.SPECTATE || mode === Mode.TERMINATION) ? onMapClick : undefined}></canvas>
+        {renderState.current && <div className="timer">
+            {formatMs(
+                (renderState.current.maxTick - renderState.current.tick + +(mode === Mode.TERMINATION)) *
+                config.tick_rate_ms
+            )}
+        </div>}
         <table className="scoreboard">
             <tbody>{scoreBoard.map((item, idx) => {
                 return <tr key={idx} data-player-id={item.player_id}

@@ -27,6 +27,18 @@
     right: 2.5%;
 }
 
+.game > .timer {
+    position: absolute;
+    top: 20px;
+    width: 100%;
+    text-align: center;
+    z-index: 4;
+    user-select: none;
+    font-family: monospace;
+    font-size: xx-large;
+    color: white;
+}
+
 .game > .scoreboard {
     position: absolute;
     top: 20px;

@@ -39,13 +39,12 @@ class ControlPort {
         this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1");
     }
     new_session({token, players, ai_players, max_tick}: LobbyRoomSummary, keys: Uint8Array) {
-        const human_players = players.length - ai_players;
-        const buffer = new Uint8Array(1 + 5 + 1 + 1 + 4 + human_players * KEY_LEN);
+        const buffer = new Uint8Array(1 + 5 + 1 + 1 + 4 + players.length * KEY_LEN);
         const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
         view.setUint8(0, 1);
         const enc = new TextEncoder();
         enc.encodeInto(token, buffer.subarray(1, 6));
-        view.setUint8(6, human_players);
+        view.setUint8(6, players.length);
         view.setUint8(7, ai_players);
         view.setUint32(8, max_tick, true);
         buffer.set(keys, 12);

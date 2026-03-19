@@ -1,6 +1,5 @@
 import GameState, {EventApplyResultType, EventHandler, GameEvent} from "./engine.ts";
 import React from "react";
-import {TICK_RATE_MS} from "./config.ts";
 import {OrderedMap} from "js-sdsl";
 
 export default class EventBuffer implements EventHandler {
@@ -13,7 +12,7 @@ export default class EventBuffer implements EventHandler {
     onStateChange: (state: GameState | undefined) => void;
     constructor({
         tolerance = 5,
-        timeoutPerPacket = TICK_RATE_MS * 2,
+        timeoutPerPacket = 40,
         panic = () => {},
         resolve = () => {},
         onStateChange = (_state: GameState | undefined) => {}

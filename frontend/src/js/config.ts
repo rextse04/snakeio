@@ -35,11 +35,13 @@ export function getFoodColor(width: number) {
     return FOOD_COLORS[Math.floor(width) % FOOD_COLORS.length];
 }
 
-export const GAME_MAX_WIDTH = 32768,
-    GAME_MAX_HEIGHT = 16784,
-    TICK_RATE_MS = 20,
-    GAME_MAX_TICK = 15000;
 export const SNAKE_BASIC_SIZE = 24,
     SEGMENT_SIZE = 8,
     FOOD_SIZE = 12,
     PACKET_CHUNK_SIZE = 1024;
+
+export default interface GameConfig {
+    data_server_addr: string;
+    tick_rate_ms: number;
+    game_max_tick: number;
+}

@@ -10,6 +10,7 @@ export type Packet = {
     data: Uint8Array;
 };
 export class PacketManager {
+    #addr = "";
     #session_id = -1;
     #player_id = -1;
     #key = new Uint8Array();
@@ -21,7 +22,8 @@ export class PacketManager {
     constructor() {
         listen("recv_packet", this.#listener);
     }
-    set(session_id: number, player_id: number, key: Uint8Array) {
+    set(addr: string, session_id: number, player_id: number, key: Uint8Array) {
+        this.#addr = addr;
         if (key.length !== 32) {
             return "Invalid key length.";
         }
@@ -68,7 +70,7 @@ export class PacketManager {
         packet.set(ciphertext, aad.byteLength);
         packet.set(mac, aad.byteLength + ciphertext.byteLength);
         this.#counter++;
-        return invoke("send_packet", packet);
+        return invoke("send_packet", {addr: this.#addr, data: packet});
     }
     #listener= (event: any) => {
         const packet = new Uint8Array(event.payload as ArrayBuffer);

@@ -1,4 +1,4 @@
-import {GAME_MAX_PLAYERS, GAME_MAX_TICK, KEY_LEN, SESSION_TOKEN_LEN} from "./config.js";
+import {GAME_MAX_PLAYERS, GAME_MAX_TICK, SESSION_TOKEN_LEN} from "./config.js";
 import type {Player} from "./player.js";
 import type {Result} from "./utils.js";
 

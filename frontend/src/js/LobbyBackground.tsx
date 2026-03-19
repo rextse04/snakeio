@@ -68,7 +68,7 @@ export default function LobbyBackground() {
         const foods = new Map<number, GameFood>();
         for (let i = 0; i < width * height / (64*64); ++i) {
             const food = genFood(width, height);
-            foods.set(asKey(food.pos), {...food, color: getFoodColor(food.width)});
+            foods.set(asKey(width, food.pos), {...food, color: getFoodColor(food.width)});
         }
         const targets = Array<Point>(snakes.length);
         for (let i = 0; i < snakes.length; ++i) {
@@ -125,7 +125,7 @@ export default function LobbyBackground() {
                 foodsAdded.push(genFood(gameState.current.width, gameState.current.height));
                 const foods = gameState.current.foods;
                 const removed = foods.keys().next().value;
-                if (removed) foodsRemoved.push(decodeKey(removed));
+                if (removed) foodsRemoved.push(decodeKey(gameState.current.width, removed));
             }
             new DeltaEvent(tick + 1, snakes, foodsAdded, foodsRemoved).apply(gameState.current);
         }, 20);

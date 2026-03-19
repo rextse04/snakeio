@@ -1,8 +1,18 @@
 import React, {createContext, JSX, SetStateAction, useEffect, useState} from "react";
+import Lobby from "./Lobby.tsx";
+import {invoke} from "@tauri-apps/api/core";
 import "../css/App.css";
 import "../css/game.css";
 import "../css/ui.css";
-import Lobby from "./Lobby.tsx";
+
+type AppConfig = {
+    control_server_addr: string;
+    debug_drop_outgoing_enabled: boolean;
+    debug_drop_outgoing_chance: number;
+    debug_drop_incoming_enabled: boolean;
+    debug_drop_incoming_chance: number;
+};
+export const app_config = await invoke<AppConfig>("get_config");
 
 function useGame(element: JSX.Element | undefined) {
     return useState(element);

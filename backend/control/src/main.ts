@@ -1,5 +1,5 @@
 import {createServer} from "http";
-import {CONTROL_PLANE_EXT_PORT, GAME_MAX_PLAYERS, GAME_MAX_TICK, KEY_LEN} from "./config.js";
+import {CONTROL_PLANE_EXT_PORT, game_config, GAME_MAX_PLAYERS, GAME_MAX_TICK, KEY_LEN} from "./config.js";
 import {type WebSocket, WebSocketServer} from "ws";
 import {lobby, LobbyPlayer, LobbyRoom, PlayerRole} from "./lobby.js";
 import type {Player} from "./player.js";
@@ -91,6 +91,10 @@ wss.on("connection", (ws: PlayerSocket) => {
         id: player_count,
         username: "Player " + player_count++
     };
+    ws.send(JSON.stringify({
+        type: "config",
+        config: game_config
+    }));
     ws.send(JSON.stringify({
         type: "register",
         server_id: ws.info!.id,

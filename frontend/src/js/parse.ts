@@ -147,8 +147,10 @@ export default function parsePacket({tick, data}: Packet, players?: number) : Pa
                 type: PacketType.UNKNOWN,
                 event: new UnknownPacketEvent(tick)
             };
+            const maxTick = view.getUint32(4, true);
+
             const snakeBasics: SnakeBasic[] = [];
-            let offset = 4;
+            let offset = 8;
             for (let i = 0; i < players; i++) {
                 const {basic, nextOffset} = parseSnakeBasic(view, offset);
                 snakeBasics[i] = basic;
@@ -157,7 +159,7 @@ export default function parsePacket({tick, data}: Packet, players?: number) : Pa
 
             return {
                 type: PacketType.TERMINATION,
-                event: new TerminationEvent(tick, snakeBasics)
+                event: new TerminationEvent(tick, maxTick, snakeBasics)
             }
         }
         default: {

@@ -125,15 +125,15 @@ Size = 8
 Max size = 41352 (~41KB)
 
 ### snapshot
-| Field      | Type     | Size               | Description              |
-|------------|----------|--------------------|--------------------------|
-| width      | float    | 4                  | World width.             |
-| height     | float    | 4                  | World height.            |
-| max_tick   | unsigned | 4                  | Termination tick number. |
-| players    | unsigned | 4                  | Number of players.       |
-| snakes     | snake[]  | variable * players | See below.               |
-| foods_size | unsigned | 4                  | Number of foods.         |
-| foods      | food[]   | 12 * foods_size    | See below.               |
+| Field      | Type     | Size               | Description                             |
+|------------|----------|--------------------|-----------------------------------------|
+| width      | float    | 4                  | World width.                            |
+| height     | float    | 4                  | World height.                           |
+| max_tick   | unsigned | 4                  | Maximum tick number before termination. |
+| players    | unsigned | 4                  | Number of players.                      |
+| snakes     | snake[]  | variable * players | See below.                              |
+| foods_size | unsigned | 4                  | Number of foods.                        |
+| foods      | food[]   | 12 * foods_size    | See below.                              |
 Max size = 156048 (~154KB)
 - players remains constant for the entire game.
 - The client is expected to have learnt players from 50000.
@@ -146,9 +146,10 @@ That said, this field is included in the snapshot to allow construction of game 
 Max size = 16
 
 ### termination
-| Field        | Type          | Size         | Description         |
-|--------------|---------------|--------------|---------------------|
-| snake_basics | snake_basic[] | 24 * players | Final snake states. |
+| Field        | Type          | Size         | Description                             |
+|--------------|---------------|--------------|-----------------------------------------|
+| max_tick     | unsigned      | 4            | Maximum tick number before termination. |
+| snake_basics | snake_basic[] | 24 * players | Final snake states.                     |
 Max size = 384
 
 ### snake_basic

@@ -1,4 +1,4 @@
-import {GAME_MAX_WIDTH, getFoodColor, getSnakeColor} from "./config.ts";
+import {getFoodColor, getSnakeColor} from "./config.ts";
 import React from "react";
 
 export interface Point {
@@ -75,13 +75,13 @@ export abstract class GameEvent {
     }
 }
 
-export function asKey(pos: Point) {
-    return pos.x + GAME_MAX_WIDTH * pos.y;
+export function asKey(width: number, pos: Point) {
+    return pos.x + width * pos.y;
 }
-export function decodeKey(key: number): Point {
+export function decodeKey(width: number, key: number): Point {
     return {
-        x: key % GAME_MAX_WIDTH,
-        y: Math.floor(key / GAME_MAX_WIDTH)
+        x: key % width,
+        y: Math.floor(key / width)
     };
 }
 
@@ -117,10 +117,10 @@ export class DeltaEvent extends GameEvent {
             }
         }
         for (const food of this.foodsAdded) {
-            state.foods.set(asKey(food.pos), {...food, color: getFoodColor(food.width)});
+            state.foods.set(asKey(state.width, food.pos), {...food, color: getFoodColor(food.width)});
         }
         for (const pos of this.foodsRemoved) {
-            state.foods.delete(asKey(pos));
+            state.foods.delete(asKey(state.width, pos));
         }
         state.tick = this.tick;
         return {type: EventApplyResultType.SUCCESS, state: state};
@@ -154,20 +154,23 @@ export class SnapshotEvent extends GameEvent {
             foods: new Map<number, GameFood>()
         };
         for (const food of this.foods) {
-            state.foods.set(asKey(food.pos), {...food, color: getFoodColor(food.width)});
+            state.foods.set(asKey(this.width, food.pos), {...food, color: getFoodColor(food.width)});
         }
         return {type: EventApplyResultType.SUCCESS, state: state};
     }
 }
 
 export class TerminationEvent extends GameEvent {
+    readonly maxTick: number;
     readonly snakeBasics: SnakeBasic[];
-    constructor(tick: number, snakeBasics: SnakeBasic[]) {
+    constructor(tick: number, maxTick: number, snakeBasics: SnakeBasic[]) {
         super(TickPolicyType.INCREMENTAL, tick);
+        this.maxTick = maxTick;
         this.snakeBasics = snakeBasics;
     }
     protected doApply(state: GameState) {
         state.tick = this.tick;
+        state.maxTick = this.maxTick;
         for (let player_id = 0; player_id < this.snakeBasics.length; ++player_id) {
             state.snakes[player_id] = {...state.snakes[player_id], ...this.snakeBasics[player_id]};
         }
