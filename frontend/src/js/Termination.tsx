@@ -11,11 +11,18 @@ function rankText(rank: number) {
         default: return rank.toString();
     }
 }
-function statusText(room: LobbyRoom, status: SnakeStatus) {
+export function killReasonText(room: LobbyRoom, status: SnakeStatus) {
     switch (status.status) {
-        case SnakeStatusType.ALIVE: return "✅️";
-        case SnakeStatusType.KILLED_BY_SNAKE: return `❌️: Killed by ${usernameOf(room, status.data)}`;
-        case SnakeStatusType.KILLED_BY_WALL: return `❌️: Killed by wall`;
+        case SnakeStatusType.KILLED_BY_SNAKE: return `Killed by ${usernameOf(room, status.data)}`;
+        case SnakeStatusType.KILLED_BY_WALL: return `Killed by wall`;
+        default: return "";
+    }
+}
+function statusText(room: LobbyRoom, status: SnakeStatus) {
+    if (status.status === SnakeStatusType.ALIVE) {
+        return "✅️"
+    } else {
+        return "❌️: " + killReasonText(room, status);
     }
 }
 export default function Termination({room, snakes}: {room: LobbyRoom, snakes: SnakeBasic[]}) {

@@ -79,7 +79,7 @@ export default function Game({config, room, first_packet}:
             onStateChange: state => {
                 if (modeRef.current === Mode.GAME && state && !isSnakeAlive(state.snakes[packet_manager.player_id])) {
                     setMode(Mode.SPECTATE);
-                    setUI(<GameOver score={state!.snakes[packet_manager.player_id].score} />);
+                    setUI(<GameOver room={room} snake={state!.snakes[packet_manager.player_id]} />);
                 }
                 if (state) {
                     setScoreBoard(state.snakes
