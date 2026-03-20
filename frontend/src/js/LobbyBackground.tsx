@@ -1,6 +1,6 @@
 import React, {useEffect, useRef} from "react";
 import useGameDisplay, {ScreenFocus, ScreenFocusType} from "./GameDisplay.ts";
-import GameState, {asKey, decodeKey, DeltaEvent, Food, GameFood, GameSnake, Point} from "./engine.ts";
+import GameState, {asKey, decodeKey, DeltaEvent, Food, GameFood, GameSnake, Point, SnakeStatusType} from "./engine.ts";
 import {getFoodColor, getSnakeColor} from "./config.ts";
 import {angleDelta, clamp} from "./utils.ts";
 
@@ -52,16 +52,17 @@ export default function LobbyBackground() {
                 angle: -Math.PI + Math.random() * (2*Math.PI),
                 width: 8 + Math.random() * 8,
                 length: Math.round(Math.random() * 128),
+                boost: 0,
                 score: -1,
-                alive: true,
+                status: {status: SnakeStatusType.ALIVE, data: 0},
                 human: false,
                 segments: [{x: Math.random() * width, y: Math.random() * height}],
                 color: getSnakeColor(i)
             };
             for (let j = 1; j < snakes[i].length; ++j) {
                 snake.segments[j] = {
-                    x: snake.segments[j-1].x + Math.cos(snake.angle) * snake.width * 0.25,
-                    y: snake.segments[j-1].y + Math.sin(snake.angle) * snake.width * 0.25
+                    x: snake.segments[j-1].x + Math.cos(snake.angle) * snake.speed,
+                    y: snake.segments[j-1].y + Math.sin(snake.angle) * snake.speed
                 };
             }
         }
@@ -106,7 +107,7 @@ export default function LobbyBackground() {
                 dy = target.y - head.y;
                 const d = Math.sqrt(dx*dx + dy*dy) + e;
                 dx /= d; dy /= d;
-                let mc = 500, mdx = 0, mdy = 0;
+                let mc = 256, mdx = 0, mdy = 0;
                 if (i !== 0 && pointerOffset.current) {
                     const focus = realFocus.current;
                     if (!focus) continue;
@@ -114,7 +115,7 @@ export default function LobbyBackground() {
                     mdy = focus.y + pointerOffset.current.y - head.y;
                     const m2 = mdx*mdx + mdy*mdy + e;
                     mdx /= m2; mdy /= m2;
-                    if (m2 < 100**2) mc *= -1;
+                    if (m2 < 100**2) mc *= -2;
                 }
                 const new_angle = Math.atan2(dy + mdy * mc, dx + mdx * mc);
                 snake.angle += clamp(angleDelta(new_angle, snake.angle), -Math.PI / 100, Math.PI / 100);

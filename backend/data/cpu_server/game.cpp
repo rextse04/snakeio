@@ -15,10 +15,16 @@
 
 using namespace snakeio;
 
-constexpr void game::impl::session::add_segment(snake& snake) noexcept {
-    const vector2d seg_pos = snake.segments_view().back() +
-        (snake.segments_view().back() - snake.segments_view()[snake.basic.length - 2]);
-    add_segment(snake, seg_pos);
+constexpr void game::impl::session::add_segments(snake& snake, scalar_t new_length) noexcept {
+    const size_t current_len = snake.length(), new_len = new_length;
+    const vector2d tail = snake.segments[current_len - 1];
+    const vector2d dir = tail - snake.segments[current_len - 2];
+    for (size_t i = current_len; i < new_len; ++i) {
+        vector2d& seg = snake.segments[i];
+        seg = tail + dir * static_cast<scalar_t>(i - current_len);
+        snakes_set.emplace(&snake, &seg);
+    }
+    snake.frac_length = new_length;
 }
 
 game::game() : memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
@@ -56,23 +62,22 @@ std::expected<id_t, game::add_session_error> game::add_session(
             client.tick = -1;
         }
         snake& s = session.snakes[i];
-        s.basic = {
-            .speed = snake_init_speed,
-            .angle = angle_dist(rng_),
-            .width = snake_init_width,
-            .length = 0,
-            .score = 0,
-            .alive = true,
-            .human = i < human_players
+        s.speed = snake_init_speed;
+        s.angle = angle_dist(rng_);
+        s.width = snake_init_width;
+        s.frac_length = 2;
+        s.score = 0;
+        s.boost = 0;
+        s.status = {snake_status_t::alive};
+        s.human = i < human_players;
+        s.segments[0] = {width_dist(rng_), height_dist(rng_)};
+        session.snakes_set.emplace(&s, &s.segments[0]);
+        s.segments[1] = s.segments[0] - vector2d{
+            std::cos(s.angle) * snake_init_speed,
+            std::sin(s.angle) * snake_init_speed
         };
-        session.add_segment(s, {width_dist(rng_), height_dist(rng_)});
-        session.add_segment(s, s.segments_view()[0] - vector2d{
-            std::cos(s.basic.angle) * s.basic.width * 2 * snake_displacement_factor,
-            std::sin(s.basic.angle) * s.basic.width * 2 * snake_displacement_factor
-        });
-        while (s.basic.length < snake_init_length) {
-             session.add_segment(s);
-        }
+        session.snakes_set.emplace(&s, &s.segments[1]);
+        session.add_segments(s, snake_init_length);
     }
     std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
@@ -145,29 +150,29 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
             default: std::unreachable();
         }
         packet.decrypt(client.key);
-        const scalar_t angle = load_float32(packet.text().subspan<4, 4>());
         client.last_packet = {
             .addr = client_addr,
             .snapshot_requested = static_cast<bool>(packet.text()[0]),
-            .angle = std::isfinite(angle) ? angle : session.snakes[packet.player_id()].basic.angle,
+            .boost = static_cast<bool>(packet.text()[1]),
+            .angle = load_float32(packet.text().subspan<4, 4>())
         };
         std::atomic_ref(client.tick).store(tick, std::memory_order::release);
     }
 }
 
-static void store_snake_basic(std::span<std::byte, 24> out, const snake_basic& basic) noexcept {
-    store_float32(out.subspan<0, 4>(), basic.speed);
-    store_float32(out.subspan<4, 4>(), basic.angle);
-    store_float32(out.subspan<8, 4>(), basic.width);
-    store_32(out.subspan<12, 4>(), basic.length);
-    store_32(out.subspan<16, 4>(), basic.score);
-    out[20] = static_cast<std::byte>(basic.alive);
-    out[21] = static_cast<std::byte>(basic.human);
-    out[22] = {};
-    out[23] = {};
+static void store_snake_basic(std::span<std::byte, 24> out, const snake_basic& snake) noexcept {
+    store_float32(out.subspan<0, 4>(), snake.speed);
+    store_float32(out.subspan<4, 4>(), snake.angle);
+    store_float32(out.subspan<8, 4>(), snake.width);
+    store_32(out.subspan<12, 4>(), snake.length());
+    store_32(out.subspan<16, 4>(), snake.score);
+    out[20] = static_cast<std::byte>(snake.boost);
+    out[21] = static_cast<std::byte>(snake.status.status);
+    out[22] = static_cast<std::byte>(snake.status.data);
+    out[23] = static_cast<std::byte>(snake.human);
 }
 static std::byte* store_snake(std::byte* out, const snake& snake) noexcept {
-    store_snake_basic(std::span<std::byte, 24>(out, 24), snake.basic);
+    store_snake_basic(std::span<std::byte, 24>(out, 24), snake);
     out += 24;
     for (const vector2d& seg : snake.segments_view()) {
         store_float32(std::span<std::byte, 4>(out, 4), seg[0]);
@@ -187,7 +192,7 @@ snakeio::size_t game::impl::store_delta(std::byte* const out, const session& ses
     store_32(std::span<std::byte, 4>(it, 4), 0);
     it += 4;
     for (const snake& snake : session.snakes_view()) {
-        store_snake_basic(std::span<std::byte, 24>(it, 24), snake.basic);
+        store_snake_basic(std::span<std::byte, 24>(it, 24), snake);
         it += 24;
     }
     store_32(std::span<std::byte, 4>(it, 4), delta.foods_added_size);
@@ -249,15 +254,30 @@ snakeio::size_t game::impl::store_termination(std::byte* out, const session& ses
     store_32(std::span<std::byte, 4>(it, 4), 3);
     store_32(std::span<std::byte, 4>(it + 4, 4), session.max_tick);
     it += 8;
-    for (const snake& snake : session.snakes_view()) {
-        it = store_snake(it, snake);
+    for (const snake_basic& snake : session.snakes_view()) {
+        store_snake_basic(std::span<std::byte, 24>(it, 24), snake);
+        it += 24;
     }
     const size_t size = align(it - out);
     std::ranges::fill(it, out + size, std::byte(0));
     return size;
 }
 
+namespace {
+    void sync_snake_dims(snake_basic& snake) noexcept {
+        const auto progress = (snake.frac_length - snake_init_length) / (snake_max_length - snake_init_length);
+        const scalar_t scaled = 1 - (1 - progress) * (1 - progress); // ease out quadratic
+        snake.speed = (snake_init_speed + (snake_min_speed - snake_init_speed) * scaled)
+            * (1 + static_cast<bool>(snake.boost) * (snake_boost_speed_factor - 1));
+        snake.width = snake_init_width + (snake_max_width - snake_init_width) * scaled;
+    }
+    struct erased_snake {
+        snake* target;
+        snake_status reason;
+    };
+}
 void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
+    using enum snake_status_t;
     clock::time_point next_tick = clock::now();
     while (!stop_token.stop_requested()) {
         impl& impl_ = game.get_impl();
@@ -314,61 +334,111 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             } else {
                 out_delta delta;
                 bool snapshot_requested = false;
-                // Processes in_packets
-                snapshot_requested = false;
-                for (id_t j = 0; j < session.human_players; ++j) {
-                    const in_packet_info& in_packet = in_packets[j];
-                    if (in_packet.tick != tick) continue;
-                    snapshot_requested = snapshot_requested || in_packet.snapshot_requested;
-                    session.snakes[j].basic.angle = in_packet.angle;
-                }
                 // AIs play
-                for (snake& snake : session.snakes_view()) {
-                    if (!snake.basic.alive || snake.basic.human) continue;
+                for (size_t j = 0; j < session.players; ++j) {
+                    snake& snake = session.snakes[j];
+                    if (!snake.alive() || snake.human) continue;
                     const vector2d head = snake.segments[0];
-                    const scalar_t sightrange = snake.basic.speed * 32;
+                    const scalar_t sightrange = snake.speed * 32;
                     // Forward bias
-                    vector2d force = vector2d{std::cos(snake.basic.angle), std::sin(snake.basic.angle)};
+                    vector2d forward_force = vector2d{std::cos(snake.angle), std::sin(snake.angle)};
                     // Food attraction
                     constexpr scalar_t epsilon = 1./1024;
                     const auto get_field = [](vector2d d) noexcept {
                         return d / (d.norm_sq() + epsilon);
                     };
+                    vector2d food_force{};
                     for (const food& food : session.food_set.find_possible(head, sightrange)) {
-                        force += get_field(food.pos - head) * food.width;
+                        food_force += get_field(food.pos - head) * food.width;
                     }
                     // Collision repulsion
-                    const scalar_t danger_mass = snake.basic.speed * 2;
+                    vector2d collision_force{};
+                    const scalar_t danger_mass = snake.speed * 2;
                     for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, sightrange)) {
-                        force -= get_field(*seg - head) * danger_mass;
+                        if (other_snake == &snake) continue;
+                        collision_force -= get_field(*seg - head) * danger_mass;
                     }
                     // Wall repulsion
-                    const scalar_t wall_mass = snake.basic.speed * 10;
+                    const scalar_t wall_mass = snake.speed * 10;
                     const auto get_wall_field = [&](scalar_t pos, scalar_t length) noexcept {
                         const scalar_t dist = length - pos;
-                        return 1 / (pos - snake.basic.width + epsilon) - 1 / (dist - snake.basic.width + epsilon);
+                        return 1 / (pos - snake.width + epsilon) - 1 / (dist - snake.width + epsilon);
                     };
-                    force[0] += wall_mass * get_wall_field(head[0], session.width);
-                    force[1] += wall_mass * get_wall_field(head[1], session.height);
-                    // Convert force to angle
-                    snake.basic.angle = std::atan2(force[1], force[0]);
+                    vector2d wall_force{
+                        wall_mass * get_wall_field(head[0], session.width),
+                        wall_mass * get_wall_field(head[1], session.height)
+                    };
+                    // Save AI command
+                    // Does not directly write to snake to ensure users and AIs use the same interface.
+                    const vector2d force = forward_force + food_force + collision_force + wall_force;
+                    in_packet_info& in_packet = in_packets_buffer[j];
+                    in_packet.tick = tick;
+                    in_packet.snapshot_requested = false;
+                    in_packet.angle = std::atan2(force[1], force[0]);
+                    in_packet.boost = (
+                        snake.frac_length > snake_init_length * 5 &&
+                        force * collision_force < 0 &&
+                        force * wall_force < 0);
+                }
+                // Processes in_packets
+                snapshot_requested = false;
+                for (id_t j = 0; j < session.players; ++j) {
+                    in_packet_info& in_packet = in_packets_buffer[j];
+                    if (in_packet.tick != tick) continue;
+                    snapshot_requested = snapshot_requested || in_packet.snapshot_requested;
+                    snake& snake = session.snakes[j];
+                    if (!snake.alive()) continue;
+                    if (std::isfinite(in_packet.angle)) {
+                        snake.angle += std::clamp(angle_diff(in_packet.angle, snake.angle),
+                            -snake_max_turn_per_tick, snake_max_turn_per_tick);
+                    }
+                    // saturation sub, no need to check if boost is 0 :)
+                    --snake.boost;
+                    if (in_packet.boost &= snake.frac_length > snake_init_length) {
+                        snake.boost += snake_seg_to_boost_ticks;
+                    }
+                    sync_snake_dims(snake);
                 }
                 // Move snakes
                 for (snake& snake : session.snakes_view()) {
-                    if (!snake.basic.alive) continue;
+                    if (!snake.alive()) continue;
                     std::shift_right(snake.segments_view().begin(), snake.segments_view().end(), 1);
                     snake.segments.front() += {
-                        std::cos(snake.basic.angle) * snake.basic.speed,
-                        std::sin(snake.basic.angle) * snake.basic.speed
+                        std::cos(snake.angle) * snake.speed,
+                        std::sin(snake.angle) * snake.speed
                     };
                 }
                 session.snakes_set.refresh();
                 // Detect collision with wall or other snakes
-                size_t erase_count = 0;
-                const auto erase_snake = [&](snake& snake) {
-                    snake.basic.alive = false;
+                std::array<erased_snake, game_max_players> to_erase;
+                id_t to_erase_size = 0;
+                for (unsigned char j = 0; j < session.players; ++j) {
+                    snake& snake = session.snakes[j];
+                    if (!snake.alive()) continue;
+                    const vector2d head = snake.segments.front();
+                    if (head[0] < snake.width || head[0] > session.width - snake.width ||
+                        head[1] < snake.width || head[1] > session.height - snake.width) {
+                        to_erase[to_erase_size++] = {&snake, killed_by_wall};
+                        continue;
+                    }
+                    for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, snake_max_width * 2)) {
+                        if (other_snake == &snake) continue;
+                        const scalar_t req = snake.width + other_snake->width;
+                        if ((*seg - head).norm_sq() > req * req)
+                            continue;
+                        const unsigned char other_snake_id = other_snake - session.snakes.data();
+                        to_erase[to_erase_size++] = {&snake, killed_by_snake, other_snake_id};
+                        if (seg == other_snake->segments.data()) {
+                            to_erase[to_erase_size++] = {other_snake, killed_by_snake, j};
+                        }
+                    }
+                }
+                size_t erased_segs = 0;
+                for (id_t j = 0; j < to_erase_size; ++j) {
+                    const auto [target, reason] = to_erase[j];
+                    target->status = reason;
                     std::uniform_real_distribution<scalar_t> food_width_dist(seg_food_min_width, seg_food_max_width);
-                    for (const vector2d& seg : snake.segments_view()) {
+                    for (const vector2d& seg : target->segments_view()) {
                         if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
                         if (std::bernoulli_distribution(seg_to_food_prob)(game.rng_)) {
                             delta.foods_added[delta.foods_added_size++] = {
@@ -377,53 +447,39 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                             };
                         }
                     }
-                    std::ranges::fill(snake.segments_view(), decltype(session::snakes_set)::erase_key);
-                    erase_count += snake.basic.length;
-                    snake.basic.length = 0;
-                };
-                for (snake& snake : session.snakes_view()) {
-                    if (!snake.basic.alive) continue;
-                    const vector2d head = snake.segments.front();
-                    if (head[0] < snake.basic.width || head[0] > session.width - snake.basic.width ||
-                        head[1] < snake.basic.width || head[1] > session.height - snake.basic.width) {
-                        erase_snake(snake);
-                        continue;
-                    }
-                    for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, snake_max_width * 2)) {
-                        const scalar_t req = snake.basic.width + other_snake->basic.width;
-                        if ((*seg - head).norm_sq() > req * req)
-                            continue;
-                        if (other_snake == &snake) {
-                            const size_t seg_idx = seg - snake.segments.data();
-                            if (seg_idx < 1 / snake_displacement_factor) [[likely]] continue;
-                            erase_snake(snake);
-                        } else {
-                            erase_snake(snake);
-                            if (seg == other_snake->segments.data()) {
-                                erase_snake(*other_snake);
-                            }
-                        }
-                    }
+                    std::ranges::fill(target->segments_view(), decltype(session::snakes_set)::erase_key);
+                    erased_segs += target->length();
+                    target->frac_length = 0;
                 }
                 session.snakes_set.refresh();
-                session.snakes_set.erase(erase_count);
-                // Detect collision with food
+                session.snakes_set.erase(erased_segs);
+                // Detect collision with food and recalculate attributes
                 for (snake& snake : session.snakes_view()) {
-                    if (!snake.basic.alive) continue;
+                    if (!snake.alive()) continue;
+                    scalar_t new_length = snake.frac_length;
                     for (food& food : session.food_set.find_possible(snake.segments[0], snake_max_width + food_max_width)) {
-                        const scalar_t req = snake.basic.width + food.width;
+                        const scalar_t req = snake.width + food.width;
                         if ((food.pos - snake.segments[0]).norm_sq() > req * req)
                             continue;
-                        snake.basic.score += static_cast<score_t>(food.width);
-                        const size_t new_length = std::min<size_t>(snake.basic.length + food.width, snake_max_length);
-                        while (snake.basic.length < new_length) {
-                            session.add_segment(snake);
-                        }
+                        snake.score += static_cast<score_t>(food.width);
+                        new_length = std::min<scalar_t>(snake_max_length,
+                            snake.frac_length + food.width * food_width_to_seg);
                         delta.foods_removed[delta.foods_removed_size++] = food.pos;
                         food.pos = session.food_set.erase_key;
                     }
+                    session.add_segments(snake, new_length);
+                }
+                erased_segs = 0;
+                for (size_t j = 0; j < session.players; ++j) {
+                    snake& snake = session.snakes[j];
+                    if (!snake.alive()) continue;
+                    if (in_packets_buffer[j].boost) {
+                        snake.segments[--snake.frac_length] = session.snakes_set.erase_key;
+                        erased_segs += 1;
+                    }
                 }
                 session.snakes_set.refresh();
+                session.snakes_set.erase(erased_segs);
                 // Add food
                 const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
                     std::poisson_distribution<size_t>(food_per_player_tick * session.players)(game.rng_));
@@ -457,7 +513,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
             }
             // Check for game end
             if (++tick > session.max_tick ||
-                std::ranges::none_of(session.snakes_view(), [](const snake& s) { return s.basic.alive; })) {
+                std::ranges::none_of(session.snakes_view(), [](const snake& s) { return s.alive(); })) {
                 std::byte termination_text[termination_max_text_size];
                 const size_t termination_text_size = store_termination(termination_text, session);
                 for (id_t j = 0; j < session.human_players; ++j) {

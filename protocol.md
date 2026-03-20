@@ -99,11 +99,12 @@ The control client is responsible for defining the requirements for and sanitizi
 
 # 50003
 ## Client to Server
-| Field              | Type  | Size | Description                                             |
-|--------------------|-------|------|---------------------------------------------------------|
-| snapshot_requested | bool  | 1    | Whether a snapshot should be requested from the server. |
-| padding            | -     | 3    | Padding.                                                |
-| angle              | float | 4    | Update to player's angle.                               |
+| Field              | Type  | Size | Description                                                                   |
+|--------------------|-------|------|-------------------------------------------------------------------------------|
+| snapshot_requested | bool  | 1    | Whether a snapshot should be requested from the server.                       |
+| boost              | bool  | 1    | Whether the player is boosting. Boosting increases speed but decreases score. |
+| padding            | -     | 2    | Padding.                                                                      |
+| angle              | float | 4    | Update to player's angle.                                                     |
 Size = 8
 
 - If angle is not finite, the current angle is kept.
@@ -153,16 +154,17 @@ Max size = 16
 Max size = 384
 
 ### snake_basic
-| Field   | Type     | Size | Description                 |
-|---------|----------|------|-----------------------------|
-| speed   | float    | 4    | Speed.                      |
-| angle   | float    | 4    | Angle.                      |
-| width   | float    | 4    | Radius of each segment.     |
-| length  | unsigned | 4    | Number of segments.         |
-| score   | unsigned | 4    | Score.                      |
-| alive   | bool     | 1    | Whether the snake is alive. |
-| human   | bool     | 1    | Whether the snake is human. |
-| padding | -        | 2    | Padding.                    |
+| Field       | Type     | Size | Description                                                    |
+|-------------|----------|------|----------------------------------------------------------------|
+| speed       | float    | 4    | Speed.                                                         |
+| angle       | float    | 4    | Angle.                                                         |
+| width       | float    | 4    | Radius of each segment.                                        |
+| length      | unsigned | 4    | Number of segments.                                            |
+| score       | unsigned | 4    | Score.                                                         |
+| boost       | unsigned | 1    | Remaining ticks in boost mode.                                 |
+| status      | unsigned | 1    | 0: alive, 1: killed by snake, 2: killed by wall                |
+| status_data | unsigned | 1    | If killed by snake, the player ID of the killer. Otherwise, 0. |
+| human       | bool     | 1    | Whether the snake is human.                                    |
 Size = 24
 
 ### snake

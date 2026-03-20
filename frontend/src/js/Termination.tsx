@@ -1,9 +1,9 @@
 import React, {useMemo} from "react";
-import {SnakeBasic} from "./Game.tsx";
 import {LobbyRoom, usernameOf} from "./Lobby.tsx";
 import GameControl from "./GameControl.tsx";
+import {SnakeBasic, SnakeStatus, SnakeStatusType} from "./engine.ts";
 
-function rank_text(rank: number) {
+function rankText(rank: number) {
     switch (rank) {
         case 1: return "🥇";
         case 2: return "🥈";
@@ -11,13 +11,20 @@ function rank_text(rank: number) {
         default: return rank.toString();
     }
 }
-export default function Termination({room, basics}: {room: LobbyRoom, basics: SnakeBasic[]}) {
+function statusText(room: LobbyRoom, status: SnakeStatus) {
+    switch (status.status) {
+        case SnakeStatusType.ALIVE: return "✅️";
+        case SnakeStatusType.KILLED_BY_SNAKE: return `❌️: Killed by ${usernameOf(room, status.data)}`;
+        case SnakeStatusType.KILLED_BY_WALL: return `❌️: Killed by wall`;
+    }
+}
+export default function Termination({room, snakes}: {room: LobbyRoom, snakes: SnakeBasic[]}) {
     const basics_ = useMemo(() => {
-        const out = basics.map(
+        const out = snakes.map(
             (basic, idx) => ({...basic, player_id: idx})
         );
         return out.sort((a, b) => b.score - a.score);
-    }, [basics]);
+    }, [snakes]);
     return <div className="termination">
         <h1>Game Over!</h1>
         <table className="scoreboard">
@@ -30,11 +37,11 @@ export default function Termination({room, basics}: {room: LobbyRoom, basics: Sn
             </tr>
             </thead>
             <tbody>
-            {basics_.map((basic, idx) => <tr key={idx}>
-                <td>{rank_text(idx+1)}</td>
-                <td>{usernameOf(room, basic.player_id)}</td>
-                <td>{basic.score}</td>
-                <td>{basic.alive ? "✅️" : "❌️"}</td>
+            {basics_.map((snake, idx) => <tr key={idx}>
+                <td>{rankText(idx+1)}</td>
+                <td>{usernameOf(room, snake.player_id)}</td>
+                <td>{snake.score}</td>
+                <td>{statusText(room, snake.status)}</td>
             </tr>)}
             </tbody>
         </table>

@@ -1,10 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <span>
-#include <limits>
 #include <bit>
 #include <algorithm>
 #include <array>
+#include <concepts>
+#include <cmath>
 
 namespace snakeio {
     constexpr std::uint_least16_t load_16(std::span<const std::byte, 2> bytes) noexcept {
@@ -73,5 +74,10 @@ namespace snakeio {
                 std::ranges::reverse_copy(std::bit_cast<std::array<std::byte, 4>>(value), out.begin());
             }
         }
+    }
+
+    template <std::floating_point T>
+    constexpr T angle_diff(T a, T b) noexcept {
+        return std::remainder(a-b, static_cast<T>(M_PI * 2));
     }
 }

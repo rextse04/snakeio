@@ -17,7 +17,7 @@ namespace snakeio {
     struct game::impl {
         struct in_packet {
             sockaddr_storage addr;
-            bool snapshot_requested;
+            bool snapshot_requested, boost;
             scalar_t angle;
         };
         struct in_packet_info : in_packet {
@@ -68,13 +68,8 @@ namespace snakeio {
             constexpr auto ai_snakes_view(this auto&& self) noexcept {
                 return std::span(self.snakes.begin() + self.human_players, self.snakes.begin() + self.players);
             }
-            constexpr void add_segment(snake& snake, vector2d pos) noexcept {
-                snake.segments[snake.basic.length] = pos;
-                snakes_set.emplace(&snake, snake.segments.data() + snake.basic.length);
-                ++snake.basic.length;
-            }
-            // UB if snake.basic.length < 2.
-            constexpr void add_segment(snake& snake) noexcept;
+            // UB if snake.basic.length() < 2.
+            constexpr void add_segments(snake& snake, scalar_t new_length) noexcept;
         };
 
         std::array<std::array<client, game_max_players>, game_max_sessions> clients;

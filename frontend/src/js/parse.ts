@@ -5,7 +5,7 @@ import GameState, {
     Food,
     GameEvent,
     Point,
-    SnakeBasic,
+    SnakeBasic, SnakeStatus,
     SnapshotEvent,
     TerminationEvent,
     TickPolicyType
@@ -42,15 +42,20 @@ export type ParseResult =
     | {type: PacketType.INVALID, event: InvalidPacketEvent};
 
 function parseSnakeBasic(view: DataView, offset: number) {
-    const speed = view.getFloat32(offset, true);
-    const angle = view.getFloat32(offset + 4, true);
-    const width = view.getFloat32(offset + 8, true);
-    const length = view.getUint32(offset + 12, true);
-    const score = view.getUint32(offset + 16, true);
-    const alive = view.getUint8(offset + 20) !== 0;
-    const human = view.getUint8(offset + 21) !== 0;
     return {
-        basic: {speed, angle, width, length, score, alive, human} as SnakeBasic,
+        basic: {
+            speed: view.getFloat32(offset, true),
+            angle: view.getFloat32(offset + 4, true),
+            width: view.getFloat32(offset + 8, true),
+            length: view.getUint32(offset + 12, true),
+            score: view.getUint32(offset + 16, true),
+            boost: view.getUint8(offset + 20),
+            status: {
+                status: view.getUint8(offset + 21),
+                data: view.getUint8(offset + 22)
+            },
+            human: view.getUint8(offset + 23) === 1,
+        } as SnakeBasic,
         nextOffset: offset + SNAKE_BASIC_SIZE
     };
 }

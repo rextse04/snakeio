@@ -9,7 +9,7 @@ import GameConfig, {getSnakeColor} from "./config.ts";
 import useGameDisplay, {ScreenFocus, ScreenFocusType} from "./GameDisplay.ts";
 import EventBuffer from "./EventBuffer.ts";
 import {formatMs, useStateRef} from "./utils.ts";
-import GameState, {DeltaEvent} from "./engine.ts";
+import GameState, {DeltaEvent, isSnakeAlive} from "./engine.ts";
 import "../css/Game.css";
 
 enum Mode {
@@ -27,6 +27,7 @@ export default function Game({config, room, first_packet}:
                              {config: GameConfig, room: LobbyRoom, first_packet: Packet}) {
     const [, setUI] = useContext(UIContext);
     const [mode, modeRef, setMode] = useStateRef(Mode.GAME);
+    const boostRef = useRef(false);
     const reconcile =
         useCallback((
             gameState: RefObject<GameState | undefined>, renderState: RefObject<GameState | undefined>,
@@ -61,6 +62,7 @@ export default function Game({config, room, first_packet}:
         const packet = new Uint8Array(PacketManager.align(8));
         const view = new DataView(packet.buffer);
         view.setUint8(0, +(snapshotRequested || panicRef.current));
+        view.setUint8(1, +boostRef.current);
         view.setFloat32(4, angle.current, true);
         packet_manager.send(packet);
     }, []);
@@ -75,7 +77,7 @@ export default function Game({config, room, first_packet}:
                 setPanic(false)
             },
             onStateChange: state => {
-                if (modeRef.current === Mode.GAME && !state?.snakes[packet_manager.player_id].alive) {
+                if (modeRef.current === Mode.GAME && state && !isSnakeAlive(state.snakes[packet_manager.player_id])) {
                     setMode(Mode.SPECTATE);
                     setUI(<GameOver score={state!.snakes[packet_manager.player_id].score} />);
                 }
@@ -87,7 +89,7 @@ export default function Game({config, room, first_packet}:
                             score: snake.score,
                             color: getSnakeColor(player_id)
                         } as ScoreBoardItem)))
-                        .filter(snake => state.snakes[snake.player_id].alive)
+                        .filter(snake => isSnakeAlive(state.snakes[snake.player_id]))
                         .sort((a, b) => b.score - a.score)
                     );
                 } else {
@@ -115,7 +117,7 @@ export default function Game({config, room, first_packet}:
         if (type === PacketType.TERMINATION) {
             setMode(Mode.TERMINATION);
             modeRef.current = Mode.TERMINATION;
-            setUI(<Termination room={room} basics={event.snakeBasics} />);
+            setUI(<Termination room={room} snakes={event.snakeBasics} />);
         }
         eventHandler.handle(event);
     }, [])
@@ -126,7 +128,6 @@ export default function Game({config, room, first_packet}:
     }, []);
 
     const onGamePointerMove = (e: React.PointerEvent) => {
-        if (e.buttons !== 1) return;
         const x = e.nativeEvent.offsetX;
         const y = e.nativeEvent.offsetY;
         const centerX = screenWidth / 2;
@@ -156,6 +157,23 @@ export default function Game({config, room, first_packet}:
             y: (clickY / mapCanvasRef.current!.height) * gameState.current.height
         });
     };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+        if (e.key !== " ") return;
+        boostRef.current = true;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+        if (e.key !== " ") return;
+        boostRef.current = false;
+    };
+    useEffect(() => {
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("keyup", onKeyUp);
+        return () => {
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("keyup", onKeyUp);
+        };
+    }, []);
 
     return <div ref={containerRef} className="game"
                 onPointerMove={[onGamePointerMove, onSpectatePointerMove, onSpectatePointerMove][mode]}>

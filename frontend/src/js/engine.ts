@@ -6,13 +6,21 @@ export interface Point {
     y: number;
 }
 
+export enum SnakeStatusType {
+    ALIVE, KILLED_BY_SNAKE, KILLED_BY_WALL
+}
+export interface SnakeStatus {
+    status: SnakeStatusType;
+    data: number;
+}
 export interface SnakeBasic {
     speed: number;
     angle: number;
     width: number;
     length: number;
+    boost: number;
     score: number;
-    alive: boolean;
+    status: SnakeStatus;
     human: boolean;
 }
 export interface Snake extends SnakeBasic {
@@ -20,6 +28,9 @@ export interface Snake extends SnakeBasic {
 }
 export interface GameSnake extends Snake {
     color: string;
+}
+export function isSnakeAlive(snake: SnakeBasic) {
+    return snake.status.status === SnakeStatusType.ALIVE;
 }
 
 export interface Food {
@@ -99,13 +110,13 @@ export class DeltaEvent extends GameEvent {
         for (let player_id = 0; player_id < this.snakeBasics.length; ++player_id) {
             state.snakes[player_id] = {...state.snakes[player_id], ...this.snakeBasics[player_id]};
             const snake = state.snakes[player_id];
-            if (!snake.alive) continue;
+            if (!isSnakeAlive(snake)) continue;
             // Move snake
             snake.segments.unshift({
                 x: snake.segments[0].x + snake.speed * Math.cos(snake.angle),
                 y: snake.segments[0].y + snake.speed * Math.sin(snake.angle)
             });
-            snake.segments.pop();
+            snake.segments.splice(snake.length);
             // Extend snake if grown
             while (snake.segments.length < snake.length) {
                 const prev1 = snake.segments[snake.segments.length - 1];

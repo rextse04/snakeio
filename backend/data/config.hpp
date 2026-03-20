@@ -17,6 +17,8 @@ namespace snakeio {
     using score_t = utils::integer<std::uint_least32_t, utils::integral_behavior::sat>;
     using key_t = std::array<std::byte, 32>;
     using tick_t = std::uint_least32_t;
+    using boost_t = utils::integer<unsigned char, utils::integral_behavior::sat>;
+    static_assert(std::numeric_limits<boost_t>::max() <= std::numeric_limits<tick_t>::max());
 
     constexpr id_t game_max_sessions = 1 << 12;
     constexpr id_t game_max_players = 16;
@@ -28,17 +30,18 @@ namespace snakeio {
     constexpr auto game_tick_rate = 20ms;
     constexpr tick_t game_max_tick = 300s / game_tick_rate;
 
-    constexpr scalar_t snake_init_speed = 5, snake_init_width = 8;
-    constexpr scalar_t snake_max_width = snake_init_width;
-    constexpr size_t snake_init_length = 10;
-    constexpr size_t snake_max_length = 1024;
-    // distance between each segment as fraction of width
-    constexpr scalar_t snake_displacement_factor = 0.25;
+    constexpr scalar_t snake_init_speed = 6, snake_init_width = 8;
+    constexpr scalar_t snake_min_speed = snake_init_speed / 2, snake_max_width = snake_init_width * 6;
+    constexpr size_t snake_init_length = 10, snake_max_length = 1024;
+    constexpr scalar_t snake_max_turn_per_tick = M_PI / 32;
+    constexpr boost_t snake_seg_to_boost_ticks = 2;
+    constexpr scalar_t snake_boost_speed_factor = 2;
 
     constexpr scalar_t gen_food_min_width = 1, gen_food_max_width = 5;
     constexpr scalar_t seg_to_food_prob = 0.25;
     constexpr scalar_t seg_food_min_width = 6, seg_food_max_width = 10;
     constexpr scalar_t food_max_width = std::max(gen_food_max_width, seg_food_max_width);
+    constexpr scalar_t food_width_to_seg = 0.5;
     constexpr float food_per_player_tick = 1./64; // expected value
 
     constexpr std::uint_least16_t control_plane_ext_port = 50000,

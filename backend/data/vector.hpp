@@ -2,6 +2,7 @@
 #include "config.hpp"
 #include <cstddef>
 #include <array>
+#include <numeric>
 
 namespace snakeio {
     template <std::size_t Dim>
@@ -59,6 +60,10 @@ namespace snakeio {
                 (*this)[i] /= scalar;
             }
             return *this;
+        }
+        // inner product
+        constexpr scalar_t operator*(const vector& other) const noexcept {
+            return std::transform_reduce(this->begin(), this->end(), other.begin(), 0);
         }
         constexpr scalar_t norm_sq() const noexcept {
             scalar_t result = 0;

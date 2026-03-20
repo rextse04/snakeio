@@ -1,4 +1,4 @@
-import GameState, {Point} from "./engine.ts";
+import GameState, {isSnakeAlive, Point} from "./engine.ts";
 
 export interface RenderContext {
     width: number;
@@ -55,15 +55,21 @@ export default function render(ctx: RenderContext, state: GameState, focus: Poin
     // Draw Snakes
     if (snakeCtx) {
         state.snakes.forEach(snake => {
-            if (!snake.alive) return;
+            if (!isSnakeAlive(snake)) return;
             snakeCtx.fillStyle = snake.color;
-            snake.segments.forEach((seg, i) => {
+            snakeCtx.strokeStyle = snake.boost ? "cyan" : "silver";
+            snakeCtx.lineWidth = snake.boost ? 3 : 1;
+            snakeCtx.shadowBlur = snake.boost ? 12 : 0;
+            snakeCtx.shadowColor = snake.color
+            for (let i = snake.segments.length - 1; i >= 0; --i) {
+                const seg = snake.segments[i];
                 const screenX = seg.x + offsetX;
                 const screenY = seg.y + offsetY;
 
                 snakeCtx.beginPath();
                 snakeCtx.arc(screenX, screenY, snake.width, 0, 2 * Math.PI);
                 snakeCtx.fill();
+                snakeCtx.stroke();
 
                 if (i === 0) { // Head
                     // Draw eyes
@@ -102,15 +108,17 @@ export default function render(ctx: RenderContext, state: GameState, focus: Poin
 
                     snakeCtx.fillStyle = snake.color;
                 }
-            });
+            }
         });
+        snakeCtx.shadowBlur = 0;
+        snakeCtx.shadowColor = "transparent";
     }
 
     // Draw Map
     if (mapCtx) {
         const mapSize = {x: ctx.map!.width, y: ctx.map!.height};
         state.snakes.forEach((snake) => {
-            if (!snake.alive || snake.segments.length === 0) return;
+            if (!isSnakeAlive(snake) || snake.segments.length === 0) return;
             const px = snake.segments[0].x / state.width * ctx.map!.width;
             const py = snake.segments[0].y / state.height * ctx.map!.height;
             mapCtx.fillStyle = snake.color;
