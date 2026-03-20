@@ -3,15 +3,17 @@
 - All integers and floats are written in little endian.
 - All floats are written in IEEE 754 format.
 - All angles are in radians.
+- A bool is written as 1 for true and 0 for false.
 - Unless otherwise specified, every packet is packed,
 i.e. no padding is added.
     - Most explicit padding in this document is for alignment.
+    - Padding bytes must be zero.
 - All packet formats in this document are expected to be sent over UDP.
 - A "packet" (logical packet) may not correspond to a single network packet.
 When the size of a "packet" is greater 1024 bytes,
 it is split into multiple chunks (transport packets) each of size 1024 bytes before encryption,
 except for the last chunk, which may be smaller.
-- Maximum sizes for packet formats in this document are calculated based on the current implementation.
+- Maximum sizes for packet formats in this document are calculated based on the current server implementation.
 They are for reference only and may change in the future.
 - The server may impose additional limits on packet fields
 (e.g. maximum number of players, maximum world size, etc.)
@@ -43,9 +45,9 @@ This document does not cover the WebSocket protocol due to rapid changes in feat
    - Player ID
    - Number of players and their usernames
    - Unique key for encryption
-4. Clients send (true, NaN) to 50003 to join the lobby.
+4. Clients send (true, false, NaN) to 50003 to join the lobby.
 5. 50003 sends lobby status to clients at regular intervals.
-Clients need to respond with (true, 0) until all players have joined.
+Clients need to respond with (true, false, NaN) until all players have joined.
 6. After all players have joined, 50003 sends the initial game snapshot to all clients.
 7. Clients and 50003 communicate using the specified packet format below.
 8. When game terminates, 50003 sends the termination packet to all clients.
@@ -99,15 +101,18 @@ The control client is responsible for defining the requirements for and sanitizi
 
 # 50003
 ## Client to Server
-| Field              | Type  | Size | Description                                                                   |
-|--------------------|-------|------|-------------------------------------------------------------------------------|
-| snapshot_requested | bool  | 1    | Whether a snapshot should be requested from the server.                       |
-| boost              | bool  | 1    | Whether the player is boosting. Boosting increases speed but decreases score. |
-| padding            | -     | 2    | Padding.                                                                      |
-| angle              | float | 4    | Update to player's angle.                                                     |
+| Field              | Type  | Size | Description                                                                         |
+|--------------------|-------|------|-------------------------------------------------------------------------------------|
+| snapshot_requested | bool  | 1    | Whether a snapshot should be requested from the server.                             |
+| boost              | bool  | 1    | Whether the player requests a boost. Boosting increases speed but decreases length. |
+| padding            | -     | 2    | Padding.                                                                            |
+| angle              | float | 4    | Update to player's angle.                                                           |
 Size = 8
 
 - If angle is not finite, the current angle is kept.
+- The server must only respond to one packet per tick per client.
+(Rationale in a [later section](#Encryption and Decryption).)
+However, it may choose any strategy to choose the one to respond to if multiple packets are received.
 
 ## Server to Client
 | Field         | Type         | Size     | Description                                            |
@@ -161,7 +166,7 @@ Max size = 384
 | width       | float    | 4    | Radius of each segment.                                        |
 | length      | unsigned | 4    | Number of segments.                                            |
 | score       | unsigned | 4    | Score.                                                         |
-| boost       | unsigned | 1    | Remaining ticks in boost mode.                                 |
+| boost       | unsigned | 1    | Remaining ticks in boost mode (including the current tick).    |
 | status      | unsigned | 1    | 0: alive, 1: killed by snake, 2: killed by wall                |
 | status_data | unsigned | 1    | If killed by snake, the player ID of the killer. Otherwise, 0. |
 | human       | bool     | 1    | Whether the snake is human.                                    |
@@ -198,7 +203,7 @@ All packets between client and server are encrypted using ChaCha20-poly1305
 | tag          | byte[16] | 16       | Tag.                                          |
 - The nonce is formed by bytes 5-16 (inclusive, 1-based).
 - When sender is 0 (the chunk is from client), nonce_part is implementation-defined.
-Only uniqueness (w.r.t. session and player) of the nonce needs to be guaranteed,
+Only uniqueness (per (session, player)) of the nonce needs to be guaranteed,
 so clients can use any method to generate nonce_part as long as it ensures uniqueness.
 - When sender is 1 (the chunk is from server), nonce_part is the (authoritative) tick number.
   - As only one logical packet is sent per tick per player, this is sufficient to ensure uniqueness.
