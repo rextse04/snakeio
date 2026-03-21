@@ -6,8 +6,8 @@
     "build:control": "npm --prefix control run build",
     "start:control": "npm --prefix control run start",
 
-    "build:data:debug": "cmake --build data/cmake-build-debug",
-    "build:data:release": "cmake --build data/cmake-build-release",
+    "build:data:debug": "cmake --build data/cmake-build-debug --target cpu_server_o",
+    "build:data:release": "cmake --build data/cmake-build-release --target cpu_server_o",
     "start:data:debug": "data/cmake-build-debug/cpu_server_o",
     "start:data:release": "data/cmake-build-release/cpu_server_o",
 

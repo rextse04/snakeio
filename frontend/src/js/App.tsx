@@ -4,6 +4,7 @@ import {invoke} from "@tauri-apps/api/core";
 import {check} from "@tauri-apps/plugin-updater";
 import Updater from "./Updater.tsx";
 
+import "@fortawesome/fontawesome-free/css/all.min.css"
 import "../css/App.css";
 import "../css/game.css";
 import "../css/ui.css";
