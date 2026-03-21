@@ -1,6 +1,9 @@
 import React, {createContext, JSX, SetStateAction, useEffect, useState} from "react";
 import Lobby from "./Lobby.tsx";
 import {invoke} from "@tauri-apps/api/core";
+import {check} from "@tauri-apps/plugin-updater";
+import Updater from "./Updater.tsx";
+
 import "../css/App.css";
 import "../css/game.css";
 import "../css/ui.css";
@@ -34,6 +37,10 @@ export const UIContext =
 export default function App() {
     const [game, setGame] = useGame(undefined);
     const [UI, setUI, hidden, setHidden] = useUI(<Lobby />);
+
+    useEffect(() => {
+        check().then(update => useUI(update ? <Updater update={update} /> : undefined));
+    }, []);
 
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {

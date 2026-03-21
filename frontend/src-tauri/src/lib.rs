@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    net::UdpSocket,
-    path::PathBuf,
-    sync::Arc,
-    thread,
-};
+use std::{fs, net::UdpSocket, path::PathBuf, sync::Arc, thread};
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -47,8 +41,7 @@ fn load_config(app: &AppHandle) -> Result<AppConfig, String> {
     let config_path: PathBuf = app_config_dir.join("config.json");
 
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config dir: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
 
     if !config_path.exists() {
@@ -63,11 +56,11 @@ fn load_config(app: &AppHandle) -> Result<AppConfig, String> {
         return Ok(default_config);
     }
 
-    let contents = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config file: {e}"))?;
+    let contents =
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config file: {e}"))?;
 
-    let mut config: AppConfig = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse config file: {e}"))?;
+    let mut config: AppConfig =
+        serde_json::from_str(&contents).map_err(|e| format!("Failed to parse config file: {e}"))?;
 
     // Defensive clamping
     config.debug_drop_outgoing_chance = config.debug_drop_outgoing_chance.clamp(0.0, 1.0);
@@ -104,7 +97,11 @@ fn send_packet(state: State<UdpState>, addr: String, data: Vec<u8>) -> Result<()
         state.config.debug_drop_outgoing_enabled,
         state.config.debug_drop_outgoing_chance,
     ) {
-        println!("[DEBUG] Dropped outgoing packet to {} ({} bytes)", addr, data.len());
+        println!(
+            "[DEBUG] Dropped outgoing packet to {} ({} bytes)",
+            addr,
+            data.len()
+        );
         return Ok(());
     }
 
@@ -124,6 +121,8 @@ fn exit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let config = load_config(app.handle())?;
             println!("Loaded config: {:?}", config);
@@ -178,11 +177,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            get_config,
-            send_packet,
-            exit_app
-        ])
+        .invoke_handler(tauri::generate_handler![get_config, send_packet, exit_app])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

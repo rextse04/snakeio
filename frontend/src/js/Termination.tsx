@@ -26,7 +26,7 @@ function statusText(room: LobbyRoom, status: SnakeStatus) {
     }
 }
 export default function Termination({room, snakes}: {room: LobbyRoom, snakes: SnakeBasic[]}) {
-    const basics_ = useMemo(() => {
+    const basics = useMemo(() => {
         const out = snakes.map(
             (basic, idx) => ({...basic, player_id: idx})
         );
@@ -44,7 +44,7 @@ export default function Termination({room, snakes}: {room: LobbyRoom, snakes: Sn
             </tr>
             </thead>
             <tbody>
-            {basics_.map((snake, idx) => <tr key={idx}>
+            {basics.map((snake, idx) => <tr key={idx}>
                 <td>{rankText(idx+1)}</td>
                 <td>{usernameOf(room, snake.player_id)}</td>
                 <td>{snake.score}</td>

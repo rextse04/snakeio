@@ -152,6 +152,7 @@ struct fuzzing_fixture {
         constexpr data_item() noexcept {}
     };
 
+    static inline bool ready;
     static inline std::independent_bits_engine<std::mt19937, 8, unsigned char> gen;
     static inline std::vector<data_item> data;
 
@@ -162,6 +163,7 @@ struct fuzzing_fixture {
     }
 
     fuzzing_fixture() {
+        if (ready) return;
         gen = decltype(gen)(std::random_device{}());
         data.resize(data_size);
         for (data_item& item : data) {
@@ -179,6 +181,7 @@ struct fuzzing_fixture {
             write_bytes(item.nonce);
             write_bytes(item.text);
         }
+        ready = true;
     }
 };
 std::ostream& operator<<(std::ostream& os, const fuzzing_fixture::data_item& item) {
@@ -199,41 +202,43 @@ std::ostream& operator<<(std::ostream& os, const fuzzing_fixture::data_item& ite
     os.flags(flags);
     return os;
 }
-BOOST_FIXTURE_TEST_SUITE(fuzzing_tests, fuzzing_fixture)
+BOOST_AUTO_TEST_SUITE(fuzzing_tests)
 constexpr std::string_view command = "python3 \"" SNAKEIO_TEST_CRYPT_PY "\" {} {}";
 constexpr char const* solution_path = "crypt_solution.bin";
 
-struct chacha20_encrypt_fixture {
+struct chacha20_encrypt_fixture : fuzzing_fixture {
     static inline std::ifstream ifs;
     chacha20_encrypt_fixture() {
-        std::system(std::format(command, "chacha20_encrypt", fuzzing_fixture::msg_size).c_str());
+        if (ifs.is_open()) return;
+        std::system(std::format(command, "chacha20_encrypt", msg_size).c_str());
         ifs.open(solution_path, std::ios::binary);
         ifs.exceptions(std::ifstream::failbit | std::ifstream::badbit);
     }
     static auto read() {
-        std::array<char, fuzzing_fixture::msg_size> out;
+        std::array<char, msg_size> out;
         ifs.read(out.data(), out.size());
         return out;
     }
 };
 BOOST_FIXTURE_TEST_SUITE(chacha20_encrypt_tests, chacha20_encrypt_fixture)
 BOOST_DATA_TEST_CASE(chacha20_encrypt_test, utf::data::xrange(fuzzing_fixture::data_size), idx) {
-    const fuzzing_fixture::data_item& item = fuzzing_fixture::data[idx];
+    const data_item& item = data[idx];
     BOOST_TEST_CONTEXT(item) {
         auto text = item.text;
         chacha20_encrypt(item.key, 1, item.nonce, text);
         const char* test_start = reinterpret_cast<const char*>(text.data());
-        const auto expected = chacha20_encrypt_fixture::read();
+        const auto expected = read();
         BOOST_CHECK_EQUAL_COLLECTIONS(test_start, test_start + expected.size(),
             expected.data(), expected.data() + expected.size());
     }
 }
 BOOST_AUTO_TEST_SUITE_END()
 
-struct poly1305_tests_fixture {
+struct poly1305_tests_fixture : fuzzing_fixture {
     static inline std::ifstream ifs;
     poly1305_tests_fixture() {
-        std::system(std::format(command, "poly1305_mac", fuzzing_fixture::msg_size).c_str());
+        if (ifs.is_open()) return;
+        std::system(std::format(command, "poly1305_mac", msg_size).c_str());
         ifs.open(solution_path, std::ios::binary);
         ifs.exceptions(std::ifstream::failbit | std::ifstream::badbit);
     }
@@ -245,7 +250,7 @@ struct poly1305_tests_fixture {
 };
 BOOST_FIXTURE_TEST_SUITE(poly1305_tests, poly1305_tests_fixture)
 BOOST_DATA_TEST_CASE(poly1305_test, utf::data::xrange(fuzzing_fixture::data_size), idx) {
-    const fuzzing_fixture::data_item& item = fuzzing_fixture::data[idx];
+    const data_item& item = data[idx];
     BOOST_TEST_CONTEXT(item) {
         snakeio::tag_t tag;
         poly1305_mac(tag, std::span(item.text), item.key);
