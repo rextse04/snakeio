@@ -21,6 +21,8 @@ jobs:
             args: ''
 
     runs-on: ${{ matrix.platform }}
+    environment:
+      name: production
     defaults:
       run:
         working-directory: frontend
