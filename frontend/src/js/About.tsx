@@ -17,11 +17,13 @@ export default function About() {
 
     const onUpdate = () => {
         setCheckingUpdate(true);
-        check().then(update => {
-            setCheckingUpdate(false);
-            if (update) setUI(<UpdateDialog update={update} />)
-            else alert("You are already up to date!");
-        })
+        check()
+            .then(update => {
+                if (update) setUI(<UpdateDialog update={update} />)
+                else alert("You are already up to date!");
+            })
+            .catch(error => alert(`Failed to check for updates. Reason: ${error}.`))
+            .finally(() => setCheckingUpdate(false));
     };
     const onLobby = () => setUI(<Lobby />);
 
