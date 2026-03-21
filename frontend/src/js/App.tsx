@@ -40,7 +40,7 @@ export default function App() {
     const [UI, setUI, hidden, setHidden] = useUI(<Lobby />);
 
     useEffect(() => {
-        check().then(update => useUI(update ? <Updater update={update} /> : undefined));
+        check().then(update => setUI(update ? <Updater update={update} /> : undefined));
     }, []);
 
     useEffect(() => {
