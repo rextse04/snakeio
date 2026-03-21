@@ -268,7 +268,7 @@ export default function Lobby() {
     const onUsernameChange = (e: any) => {
         setPlayer(player => ({
             ...player,
-            username: e.currentTarget.value
+            username: e.target.value
         }));
     };
     const onRegister = () => {
@@ -280,7 +280,7 @@ export default function Lobby() {
     const onTokenChange = (e: any) => {
         setRoom(room => ({
             ...room,
-            token: e.currentTarget.value
+            token: e.target.value
         }));
     };
     const onJoin = () => {
@@ -313,7 +313,7 @@ export default function Lobby() {
         wsRef.current?.send(JSON.stringify({
             type: "room_set",
             field: "max_tick",
-            value: e.currentTarget.value * 1000 / gameConfigRef.current!.tick_rate_ms
+            value: e.target.value * 1000 / gameConfigRef.current!.tick_rate_ms
         }));
     }
     const onStart = () => {
