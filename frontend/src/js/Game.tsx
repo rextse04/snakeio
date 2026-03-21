@@ -33,14 +33,14 @@ export default function Game({config, room, first_packet}:
             gameState: RefObject<GameState | undefined>, renderState: RefObject<GameState | undefined>,
             gameGap: number, renderGap: number) => {
             if (!gameState.current) return;
-            if (modeRef.current === Mode.TERMINATION || !renderState.current || gameGap <= config.game_max_tick) {
+            if (modeRef.current === Mode.TERMINATION || !renderState.current || gameGap <= config.tick_rate_ms) {
                 renderState.current = gameState.current;
                 return;
             }
             if (gameState.current.tick >= renderState.current.tick) {
                 renderState.current = structuredClone(gameState.current);
             } else {
-                if (renderGap <= config.game_max_tick) return;
+                if (renderGap <= config.tick_rate_ms) return;
             }
 
             const state = renderState.current;
