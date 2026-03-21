@@ -1,6 +1,6 @@
 [package]
 name = "snakeio"
-version = "0.1.4"
+version = "0.1.5"
 description = "A true multiplayer clone of slither.io"
 authors = ["Rex Tse"]
 edition = "2024"
