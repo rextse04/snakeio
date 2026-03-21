@@ -5,7 +5,7 @@ import GameState, {
     Food,
     GameEvent,
     Point,
-    SnakeBasic, SnakeStatus,
+    SnakeBasic,
     SnapshotEvent,
     TerminationEvent,
     TickPolicyType
