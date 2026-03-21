@@ -13,6 +13,9 @@ export default defineConfig(async () => ({
             }
         })
     ],
+    build: {
+        target: "es2022"
+    },
     // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
     //
     // 1. prevent Vite from obscuring rust errors
@@ -24,10 +27,10 @@ export default defineConfig(async () => ({
         host: host || false,
         hmr: host
             ? {
-                    protocol: "ws",
-                    host,
-                    port: 1421,
-                }
+                protocol: "ws",
+                host,
+                port: 1421,
+            }
             : undefined,
         watch: {
             // 3. tell Vite to ignore watching `src-tauri`
