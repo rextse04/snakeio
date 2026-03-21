@@ -4,61 +4,137 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish-tauri:
+  build:
+    name: Build (${{ matrix.name }})
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest' # for Arm based macs (M1 and above).
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest' # for Intel based macs.
-            args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-latest'
-            args: ''
-          - platform: 'windows-latest'
-            args: ''
+          - name: macos-arm64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x64
+            platform: macos-latest
+            target: x86_64-apple-darwin
+          - name: linux-x64
+            platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.platform }}
     environment:
       name: production
+
     defaults:
       run:
         working-directory: frontend
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: setup node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: install Rust stable
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
 
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-latest' # This must match the platform value defined above.
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-      - name: install frontend dependencies
-        run: yarn install # change this to npm, pnpm or bun depending on which one you use.
+      - name: Install frontend dependencies
+        run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0.6.2
+      # If your package.json has a script like "tauri": "tauri"
+      - name: Build Tauri app
+        run: npm run tauri build -- --target ${{ matrix.target }}
+
+      # Upload everything under the target bundle directory.
+      # This is the safest generic option because bundle file names vary by platform/format.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-bundles-${{ matrix.name }}
+          path: |
+            frontend/src-tauri/target/${{ matrix.target }}/release/bundle/**
+            frontend/src-tauri/target/${{ matrix.target }}/release/*.msi
+            frontend/src-tauri/target/${{ matrix.target }}/release/*.exe
+          if-no-files-found: warn
+
+  release:
+    name: Create GitHub draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional but recommended: extract app version from frontend/src-tauri/tauri.conf.json
+      # If your version is somewhere else, adjust this step.
+      - name: Get app version
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' frontend/src-tauri/tauri.conf.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      # Flatten files into one directory for easy upload
+      - name: Collect release files
+        run: |
+          mkdir -p dist
+          find release-assets -type f \
+            \( \
+              -name "*.dmg" -o \
+              -name "*.app.tar.gz" -o \
+              -name "*.app.tar.gz.sig" -o \
+              -name "*.AppImage" -o \
+              -name "*.AppImage.tar.gz" -o \
+              -name "*.deb" -o \
+              -name "*.rpm" -o \
+              -name "*.tar.gz" -o \
+              -name "*.tar.gz.sig" -o \
+              -name "*.msi" -o \
+              -name "*.msi.zip" -o \
+              -name "*.exe" -o \
+              -name "*.zip" -o \
+              -name "*.sig" \
+            \) \
+            -exec cp {} dist/ \;
+
+          echo "Collected files:"
+          ls -la dist || true
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-v${{ steps.version.outputs.version }}
+          name: snake.io v${{ steps.version.outputs.version }}
+          body: |
+            See the assets to download this version and install.
+          draft: true
+          prerelease: false
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PASSWORD }}
-        with:
-          projectPath: frontend
-          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
-          releaseName: 'snake.io v__VERSION__'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
