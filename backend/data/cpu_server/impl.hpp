@@ -1,10 +1,10 @@
 #pragma once
 #include <config.hpp>
 #include <game.hpp>
-#include <snake.hpp>
-#include <food.hpp>
 #include <vector.hpp>
 #include <network.hpp>
+#include "snake.hpp"
+#include "food.hpp"
 #include "spatial_set.hpp"
 #include <array>
 #include <tuple>
@@ -25,7 +25,7 @@ namespace snakeio {
         };
         struct out_delta {
             size_t foods_added_size = 0, foods_removed_size = 0;
-            std::array<food, game_max_food> foods_added;
+            std::array<cpu::food, game_max_food> foods_added;
             std::array<vector2d, game_max_food> foods_removed;
 
             constexpr auto foods_added_view(this auto&& self) noexcept {
@@ -44,18 +44,18 @@ namespace snakeio {
 
         struct session {
             using snakes_set_type = cpu::spatial_set<snake_max_width * 2, snake_max_length * game_max_players,
-                std::tuple<snake*, vector2d*>,
+                std::tuple<cpu::snake*, vector2d*>,
                 [](const auto& node) { return *std::get<1>(node); },
                 [](auto& node, const vector2d& pos) { std::get<1>(node) = const_cast<vector2d*>(&pos); }>;
             using food_set_type = cpu::spatial_set<snake_max_width + food_max_width, game_max_food,
-                food,
-                [](const food& node) { return node.pos; },
-                [](food& node, const vector2d& value) { node.pos = value; }>;
+                cpu::food,
+                [](const cpu::food& node) { return node.pos; },
+                [](cpu::food& node, const vector2d& value) { node.pos = value; }>;
             id_t players, human_players;
             atomic_align(tick_t) tick;
             tick_t max_tick;
             scalar_t width, height;
-            std::array<snake, game_max_players> snakes;
+            std::array<cpu::snake, game_max_players> snakes;
             snakes_set_type snakes_set;
             food_set_type food_set;
 
@@ -69,7 +69,7 @@ namespace snakeio {
                 return std::span(self.snakes.begin() + self.human_players, self.snakes.begin() + self.players);
             }
             // UB if snake.basic.length() < 2.
-            constexpr void add_segments(snake& snake, scalar_t new_length) noexcept;
+            constexpr void add_segments(cpu::snake& snake, scalar_t new_length) noexcept;
         };
 
         std::array<std::array<client, game_max_players>, game_max_sessions> clients;

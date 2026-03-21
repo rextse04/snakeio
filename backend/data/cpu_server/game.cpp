@@ -14,6 +14,7 @@
 #include <ranges>
 
 using namespace snakeio;
+using namespace snakeio::cpu;
 
 constexpr void game::impl::session::add_segments(snake& snake, scalar_t new_length) noexcept {
     const size_t current_len = snake.length(), new_len = new_length;

@@ -1,5 +1,4 @@
 #pragma once
-#include "cpp_utils/integer.hpp"
 #include <cstdint>
 #include <limits>
 #include <cmath>
@@ -14,10 +13,10 @@ namespace snakeio {
     using id_t = std::uint_least32_t;
     using scalar_t = float;
     static_assert(std::numeric_limits<scalar_t>::is_iec559 && sizeof(scalar_t) == 4);
-    using score_t = utils::integer<std::uint_least32_t, utils::integral_behavior::sat>;
+    using score_t = std::uint_least32_t;
     using key_t = std::array<std::byte, 32>;
     using tick_t = std::uint_least32_t;
-    using boost_t = utils::integer<unsigned char, utils::integral_behavior::sat>;
+    using boost_t = unsigned char;
     static_assert(std::numeric_limits<boost_t>::max() <= std::numeric_limits<tick_t>::max());
 
     constexpr id_t game_max_sessions = 1 << 12;

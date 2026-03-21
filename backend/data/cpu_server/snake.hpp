@@ -1,13 +1,12 @@
 #pragma once
-#include "config.hpp"
-#include "vector.hpp"
+#include <config.hpp>
+#include <snake_status.hpp>
+#include <vector.hpp>
+#include <cpp_utils/integer.hpp>
 #include <array>
 #include <span>
 
-namespace snakeio {
-    enum class snake_status_t : unsigned char {
-        alive, killed_by_snake, killed_by_wall
-    };
+namespace snakeio::cpu {
     struct snake_status {
         snake_status_t status;
         unsigned char data;
@@ -16,8 +15,8 @@ namespace snakeio {
         scalar_t speed, angle;
         scalar_t width;
         scalar_t frac_length;
-        score_t score;
-        boost_t boost;
+        utils::integer<score_t, utils::integral_behavior::sat> score;
+        utils::integer<boost_t, utils::integral_behavior::sat> boost;
         snake_status status;
         bool human;
 

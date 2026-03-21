@@ -2,7 +2,7 @@
 #include <config.hpp>
 #include <vector.hpp>
 
-namespace snakeio {
+namespace snakeio::cpu {
     struct food {
         vector2d pos;
         scalar_t width;
