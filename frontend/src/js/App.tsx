@@ -2,7 +2,7 @@ import React, {createContext, JSX, SetStateAction, useEffect, useState} from "re
 import Lobby from "./Lobby.tsx";
 import {invoke} from "@tauri-apps/api/core";
 import {check} from "@tauri-apps/plugin-updater";
-import Updater from "./Updater.tsx";
+import {UpdateDialog} from "./Updater.tsx";
 
 import "@fortawesome/fontawesome-free/css/all.min.css"
 import "../css/App.css";
@@ -40,7 +40,9 @@ export default function App() {
     const [UI, setUI, hidden, setHidden] = useUI(<Lobby />);
 
     useEffect(() => {
-        check().then(update => setUI(update ? <Updater update={update} /> : undefined));
+        check().then(update => {
+            if (update) setUI(<UpdateDialog update={update} />)
+        });
     }, []);
 
     useEffect(() => {

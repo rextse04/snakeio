@@ -10,7 +10,7 @@
     justify-content: center;
 }
 
-#ui > * {
+#ui > :first-child {
     padding: 20px;
     border: 1px solid darkgray;
     border-radius: 10px;
@@ -39,6 +39,19 @@ button:active, button:disabled {
 button:disabled {
     cursor: auto;
 }
+
+button.icon-button {
+    border: none;
+    padding: 0;
+    background-color: transparent;
+    color: gray;
+}
+button.icon-button:hover {
+    color: darkgray;
+}
+button.icon-button:active {
+    color: white;
+}
 input[type=checkbox] {
     width: 20px;
     height: 20px;
@@ -53,20 +66,28 @@ input[type=checkbox] {
 .row-input > .main {
     flex: 1;
 }
+.button-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+}
+
 .username {
     width: 300px;
 }
+
 input.validated {
     background-color: lightgreen;
 }
 input.validated:invalid {
     background-color: lightpink;
 }
-.button-group {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
+
 .icon {
     border: none !important;
     padding: 5px;

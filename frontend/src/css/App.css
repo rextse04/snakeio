@@ -21,12 +21,12 @@ body {
     flex: 1;
 }
 
-table.scoreboard {
+table {
     border-collapse: collapse;
 }
-table.scoreboard :is(th, td) {
+table :is(th, td) {
     text-align: left;
 }
-table.scoreboard :is(th, td):not(:last-child) {
+table :is(th, td):not(:last-child) {
     padding-right: 10px;
 }

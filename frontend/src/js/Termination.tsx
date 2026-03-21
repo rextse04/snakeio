@@ -34,7 +34,7 @@ export default function Termination({room, snakes}: {room: LobbyRoom, snakes: Sn
     }, [snakes]);
     return <div className="termination">
         <h1>Game Over!</h1>
-        <table className="scoreboard">
+        <table>
             <thead>
             <tr>
                 <th>Rank</th>

@@ -5,8 +5,10 @@ import {Packet, packet_manager, PacketManager} from "./packet.ts";
 import Game from "./Game.tsx";
 import LobbyBackground from "./LobbyBackground.tsx";
 import GameConfig from "./config.ts";
-import "../css/Lobby.css";
 import {useStateRef} from "./utils.ts";
+
+import "../css/Lobby.css";
+import About from "./About.tsx";
 
 export enum PlayerRole {
     MEMBER = 0,
@@ -60,6 +62,7 @@ function LobbyPlayer({wsRef, room, user, player, disabled = false}:
     const onRoleChange = () => {
         const target =
             (player.role === PlayerRole.ADMIN) ? PlayerRole.MEMBER : PlayerRole.ADMIN;
+
         if (!confirm("Are you sure you want to change " + player.username + "'s role to " + roleName(target) + "?"))
             return;
         wsRef.current?.send(JSON.stringify({
@@ -322,63 +325,70 @@ export default function Lobby() {
             type: "room_start"
         }));
     };
-    return <div className="lobby">
-        <div className="row-input">
-            <label htmlFor="username">Username</label>
-            <input className="main username" type="text" value={player.username} onChange={onUsernameChange} />
-            <button className="register" onClick={onRegister}>Register</button>
-        </div>
-        <div className="divider"></div>
-        <div className="main">
+    return <>
+        <div className="lobby">
             <div className="row-input">
-                <label htmlFor={session_token_id}>Session Token</label>
-                <input type="text" id={session_token_id} className="session-token main validated"
-                       minLength={5} maxLength={5} pattern="[A-Za-z0-9]{5}"
-                       title="A session token must consist of 5 alphanumeric characters."
-                       value={room.token} onChange={onTokenChange}
-                       readOnly={disabled || room.players.length > 0} />
-                <button disabled={disabled || room.players.length > 0} onClick={onJoin}>Join</button>
-                <button disabled={disabled || room.players.length > 0} onClick={onCreate}>Create</button>
+                <label htmlFor="username">Username</label>
+                <input className="main username" type="text" value={player.username} onChange={onUsernameChange} />
+                <button className="register" onClick={onRegister}>Register</button>
             </div>
-            {room.players.length > 0 && <>
-                <div className="lobby-room">
-                    <div>
-                        <input type="checkbox" checked={room.is_public} onChange={onPublicChange}
-                               disabled={disabled || player.role! < PlayerRole.ADMIN} />
-                        <label htmlFor="lobby-room-public">Public</label>
-                        <div className="flex-spacer"></div>
-                        <button className="icon" onClick={onAiPlayersChange}
-                                disabled={disabled || player.role! < PlayerRole.ADMIN}>
-                            <i className="fa-solid fa-robot"></i>
-                        </button>
-                    </div>
-                    {room.players.map(teammate => (
-                        <LobbyPlayer key={teammate.server_id}
-                                     wsRef={wsRef} room={room} user={player} player={teammate} disabled={disabled} />
-                    ))}
-                    {[...function*() {
-                        for (let player_id = room.players.length; player_id < allPlayers(room); ++player_id) {
-                            yield <LobbyPlayer key={player_id} wsRef={wsRef} user={player} room={room} player={{
-                                server_id: -1,
-                                username: usernameOf(room, player_id),
-                                role: PlayerRole.AI
-                            }} disabled={disabled} />;
-                        }
-                    }()]}
-                </div>
+            <div className="divider"></div>
+            <div className="main">
                 <div className="row-input">
-                    <label htmlFor={max_tick_id}>Game Time (s)</label>
-                    <input type="number" id={max_tick_id}
-                           min={0} max={gameConfig!.game_max_tick * gameConfig!.tick_rate_ms / 1000} step={15}
-                           disabled={disabled || player.role! < PlayerRole.ADMIN}
-                           value={(room.max_tick || gameConfig!.game_max_tick) * gameConfig!.tick_rate_ms / 1000}
-                           onChange={onMaxTickChange} />
+                    <label htmlFor={session_token_id}>Session Token</label>
+                    <input type="text" id={session_token_id} className="session-token main validated"
+                           minLength={5} maxLength={5} pattern="[A-Za-z0-9]{5}"
+                           title="A session token must consist of 5 alphanumeric characters."
+                           value={room.token} onChange={onTokenChange}
+                           readOnly={disabled || room.players.length > 0} />
+                    <button disabled={disabled || room.players.length > 0} onClick={onJoin}>Join</button>
+                    <button disabled={disabled || room.players.length > 0} onClick={onCreate}>Create</button>
                 </div>
-            </>}
+                {room.players.length > 0 && <>
+                    <div className="lobby-room">
+                        <div>
+                            <input type="checkbox" checked={room.is_public} onChange={onPublicChange}
+                                   disabled={disabled || player.role! < PlayerRole.ADMIN} />
+                            <label htmlFor="lobby-room-public">Public</label>
+                            <div className="flex-spacer"></div>
+                            <button className="icon" onClick={onAiPlayersChange}
+                                    disabled={disabled || player.role! < PlayerRole.ADMIN}>
+                                <i className="fa-solid fa-robot"></i>
+                            </button>
+                        </div>
+                        {room.players.map(teammate => (
+                            <LobbyPlayer key={teammate.server_id}
+                                         wsRef={wsRef} room={room} user={player} player={teammate} disabled={disabled} />
+                        ))}
+                        {[...function*() {
+                            for (let player_id = room.players.length; player_id < allPlayers(room); ++player_id) {
+                                yield <LobbyPlayer key={player_id} wsRef={wsRef} user={player} room={room} player={{
+                                    server_id: -1,
+                                    username: usernameOf(room, player_id),
+                                    role: PlayerRole.AI
+                                }} disabled={disabled} />;
+                            }
+                        }()]}
+                    </div>
+                    <div className="row-input">
+                        <label htmlFor={max_tick_id}>Game Time (s)</label>
+                        <input type="number" id={max_tick_id}
+                               min={0} max={gameConfig!.game_max_tick * gameConfig!.tick_rate_ms / 1000} step={15}
+                               disabled={disabled || player.role! < PlayerRole.ADMIN}
+                               value={(room.max_tick || gameConfig!.game_max_tick) * gameConfig!.tick_rate_ms / 1000}
+                               onChange={onMaxTickChange} />
+                    </div>
+                </>}
+            </div>
+            <div className="divider"></div>
+            <button className="start-btn" disabled={disabled || player.role !== PlayerRole.OWNER} onClick={onStart}>
+                {started ? "Waiting..." : "Start!"}
+            </button>
         </div>
-        <div className="divider"></div>
-        <button className="start-btn" disabled={disabled || player.role !== PlayerRole.OWNER} onClick={onStart}>
-            {started ? "Waiting..." : "Start!"}
-        </button>
-    </div>;
+        <div className="about">
+            <button className="icon-button" onClick={() => setUI(<About />)}>
+                <i className="fa-solid fa-circle-info"></i>
+            </button>
+        </div>
+    </>;
 }
