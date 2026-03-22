@@ -26,7 +26,9 @@ namespace snakeio::logger {
         error{std::cout, "\033[31m[ERROR]\033[0m "};
 
     inline void print_packet(const logger& logger, std::span<const std::byte> packet) {
-        logger("{} bytes received: {::0>8b}.",
-            packet.size(), std::span(reinterpret_cast<const unsigned char*>(packet.data()), packet.size()));
+        logger("{} bytes received:", packet.size());
+        for (std::byte byte : packet) {
+            logger(" {}", static_cast<unsigned char>(byte));
+        }
     }
 }
