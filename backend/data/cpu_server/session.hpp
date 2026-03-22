@@ -13,7 +13,7 @@ namespace snakeio::cpu {
             std::tuple<snake*, vector2d*>,
             [](const auto& node) { return *std::get<1>(node); },
             [](auto& node, const vector2d& pos) { std::get<1>(node) = const_cast<vector2d*>(&pos); }>;
-        using food_set_type = spatial_set<snake_max_width + food_max_width, game_max_food,
+        using food_set_type = spatial_set<snake_max_width, game_max_food,
             food,
             [](const food& node) { return node.pos; },
             [](food& node, const vector2d& value) { node.pos = value; }>;
