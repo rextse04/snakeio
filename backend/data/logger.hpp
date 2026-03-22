@@ -8,6 +8,8 @@ namespace snakeio::logger {
     private:
         std::ostream& os_;
         const char* prefix_;
+
+        friend void print_packet(const logger&, std::span<const std::byte>);
     public:
         constexpr logger(std::ostream& os, const char* prefix) noexcept :
             os_(os), prefix_(prefix) {}
@@ -28,7 +30,8 @@ namespace snakeio::logger {
     inline void print_packet(const logger& logger, std::span<const std::byte> packet) {
         logger("{} bytes received:", packet.size());
         for (std::byte byte : packet) {
-            logger(" {}", static_cast<unsigned char>(byte));
+            std::print(logger.os_, " {}", static_cast<unsigned char>(byte));
         }
+        std::println(logger.os_);
     }
 }
