@@ -1,9 +1,9 @@
 #include "impl.hpp"
+#include "parse.hpp"
 #include <config.hpp>
 #include <logger.hpp>
 #include <game.hpp>
 #include <packet.hpp>
-#include <utils.hpp>
 #include <network.hpp>
 #include <cstddef>
 #include <memory>
@@ -15,18 +15,6 @@
 
 using namespace snakeio;
 using namespace snakeio::cpu;
-
-constexpr void game::impl::session::add_segments(snake& snake, scalar_t new_length) noexcept {
-    const size_t current_len = snake.length(), new_len = new_length;
-    const vector2d tail = snake.segments[current_len - 1];
-    const vector2d dir = tail - snake.segments[current_len - 2];
-    for (size_t i = current_len; i < new_len; ++i) {
-        vector2d& seg = snake.segments[i];
-        seg = tail + dir * static_cast<scalar_t>(i - current_len);
-        snakes_set.emplace(&snake, &seg);
-    }
-    snake.frac_length = new_length;
-}
 
 game::game() : memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
     new(memory_.get()) impl;
@@ -40,7 +28,7 @@ std::expected<id_t, game::add_session_error> game::add_session(
     if (!session_id) [[unlikely]] {
         return std::unexpected(no_memory);
     }
-    impl::session& session = impl_.sessions[*session_id];
+    session& session = impl_.sessions[*session_id];
     session.players = human_players + ai_players;
     session.human_players = human_players;
     if (session.players > game_max_players) [[unlikely]] {
@@ -58,7 +46,7 @@ std::expected<id_t, game::add_session_error> game::add_session(
     for (id_t i = 0; i < session.players; ++i) {
         // sync not needed here because session is still inactive
         if (i < human_players) {
-            impl::client& client = impl_.clients[*session_id][i];
+            client& client = impl_.clients[*session_id][i];
             client.key = keys[i];
             client.tick = -1;
         }
@@ -159,109 +147,6 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
         };
         std::atomic_ref(client.tick).store(tick, std::memory_order::release);
     }
-}
-
-static void store_snake_basic(std::span<std::byte, 24> out, const snake_basic& snake) noexcept {
-    store_float32(out.subspan<0, 4>(), snake.speed);
-    store_float32(out.subspan<4, 4>(), snake.angle);
-    store_float32(out.subspan<8, 4>(), snake.width);
-    store_32(out.subspan<12, 4>(), snake.length());
-    store_32(out.subspan<16, 4>(), snake.score);
-    out[20] = static_cast<std::byte>(snake.boost);
-    out[21] = static_cast<std::byte>(snake.status.status);
-    out[22] = static_cast<std::byte>(snake.status.data);
-    out[23] = static_cast<std::byte>(snake.human);
-}
-static std::byte* store_snake(std::byte* out, const snake& snake) noexcept {
-    store_snake_basic(std::span<std::byte, 24>(out, 24), snake);
-    out += 24;
-    for (const vector2d& seg : snake.segments_view()) {
-        store_float32(std::span<std::byte, 4>(out, 4), seg[0]);
-        store_float32(std::span<std::byte, 4>(out + 4, 4), seg[1]);
-        out += 8;
-    }
-    return out;
-}
-static void store_food(std::span<std::byte, 12> out, const food& food) noexcept {
-    store_float32(out.subspan<0, 4>(), food.pos[0]);
-    store_float32(out.subspan<4, 4>(), food.pos[1]);
-    store_float32(out.subspan<8, 4>(), food.width);
-}
-
-snakeio::size_t game::impl::store_delta(std::byte* const out, const session& session, out_delta& delta) noexcept {
-    std::byte* it = out;
-    store_32(std::span<std::byte, 4>(it, 4), 0);
-    it += 4;
-    for (const snake& snake : session.snakes_view()) {
-        store_snake_basic(std::span<std::byte, 24>(it, 24), snake);
-        it += 24;
-    }
-    store_32(std::span<std::byte, 4>(it, 4), delta.foods_added_size);
-    it += 4;
-    for (const food& food : delta.foods_added_view()) {
-        store_float32(std::span<std::byte, 4>(it, 4), food.pos[0]);
-        store_float32(std::span<std::byte, 4>(it + 4, 4), food.pos[1]);
-        store_float32(std::span<std::byte, 4>(it + 8, 4), food.width);
-        it += 12;
-    }
-    store_32(std::span<std::byte, 4>(it, 4), delta.foods_removed_size);
-    it += 4;
-    for (const vector2d& pos : delta.foods_removed_view()) {
-        store_float32(std::span<std::byte, 4>(it, 4), pos[0]);
-        store_float32(std::span<std::byte, 4>(it + 4, 4), pos[1]);
-        it += 8;
-    }
-    const size_t size = align(it - out);
-    std::ranges::fill(it, out + size, std::byte(0));
-    return size;
-}
-
-snakeio::size_t game::impl::store_snapshot(std::byte* const out, const session& session) noexcept {
-    std::byte* it = out;
-    store_32(std::span<std::byte, 4>(it, 4), 1);
-    store_float32(std::span<std::byte, 4>(it + 4, 4), session.width);
-    store_float32(std::span<std::byte, 4>(it + 8, 4), session.height);
-    store_32(std::span<std::byte, 4>(it + 12, 4), session.max_tick);
-    store_32(std::span<std::byte, 4>(it + 16, 4), session.players);
-    it += 20;
-    for (const snake& snake : session.snakes_view()) {
-        it = store_snake(it, snake);
-    }
-    store_32(std::span<std::byte, 4>(it, 4), session.food_set.size());
-    it += 4;
-    for (const food& food : session.food_set) {
-        store_food(std::span<std::byte, 12>(it, 12), food);
-        it += 12;
-    }
-    const size_t size = align(it - out);
-    std::ranges::fill(it, out + size, std::byte(0));
-    return size;
-}
-
-snakeio::size_t game::impl::store_lobby_status(std::byte* out, std::span<const in_packet_info> in_packets) noexcept {
-    std::byte* it = out;
-    store_32(std::span<std::byte, 4>(it, 4), 2);
-    it += 4;
-    for (const in_packet_info& in_packet : in_packets) {
-        *(it++) = static_cast<std::byte>(in_packet.tick == 0);
-    }
-    const size_t size = align(it - out);
-    std::ranges::fill(it, out + size, std::byte(0));
-    return size;
-}
-
-snakeio::size_t game::impl::store_termination(std::byte* out, const session& session) noexcept {
-    std::byte* it = out;
-    store_32(std::span<std::byte, 4>(it, 4), 3);
-    store_32(std::span<std::byte, 4>(it + 4, 4), session.max_tick);
-    it += 8;
-    for (const snake_basic& snake : session.snakes_view()) {
-        store_snake_basic(std::span<std::byte, 24>(it, 24), snake);
-        it += 24;
-    }
-    const size_t size = align(it - out);
-    std::ranges::fill(it, out + size, std::byte(0));
-    return size;
 }
 
 namespace {

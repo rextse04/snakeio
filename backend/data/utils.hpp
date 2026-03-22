@@ -7,6 +7,8 @@
 #include <concepts>
 #include <cmath>
 
+#define atomic_align(type) alignas(std::atomic_ref<type>::required_alignment) type
+
 namespace snakeio {
     constexpr std::uint_least16_t load_16(std::span<const std::byte, 2> bytes) noexcept {
         return (static_cast<std::uint_least16_t>(bytes[0]) << 0) |
