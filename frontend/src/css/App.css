@@ -5,7 +5,7 @@ body {
     border: none;
     padding: 0;
 }
-#root {
+#root, #game {
     width: 100%;
     height: 100%;
 }
