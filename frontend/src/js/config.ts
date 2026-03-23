@@ -42,6 +42,7 @@ export const SNAKE_BASIC_SIZE = 24,
 
 export default interface GameConfig {
     data_server_addr: string;
+    game_max_players: number;
     tick_rate_ms: number;
     game_max_tick: number;
 }

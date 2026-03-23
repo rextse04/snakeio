@@ -352,7 +352,9 @@ export default function Lobby() {
                             <label htmlFor="lobby-room-public">Public</label>
                             <div className="flex-spacer"></div>
                             <button className="icon" onClick={onAiPlayersChange}
-                                    disabled={disabled || player.role! < PlayerRole.ADMIN}>
+                                    disabled={disabled
+                                        || player.role! < PlayerRole.ADMIN
+                                        || allPlayers(room) >= gameConfig!.game_max_players}>
                                 <i className="fa-solid fa-robot"></i>
                             </button>
                         </div>

@@ -8,6 +8,7 @@ export const CONTROL_PLANE_EXT_PORT = 50000,
     GAME_MAX_TICK = 15000;
 export const game_config = {
     data_server_addr: "localhost:50003",
+    game_max_players: GAME_MAX_PLAYERS,
     tick_rate_ms: 20,
     game_max_tick: GAME_MAX_TICK
 };
