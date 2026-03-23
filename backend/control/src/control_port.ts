@@ -35,8 +35,13 @@ class ControlPort {
     }
     kill() {
         const buffer = new Uint8Array(1);
-        buffer[0] = 0;
-        this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1");
+        // buffer[0] = 0;
+        return new Promise<void>((res, rej) => {
+            this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1", err => {
+                if (err) rej(err);
+                else res();
+            });
+        });
     }
     new_session({token, players, ai_players, max_tick}: LobbyRoomSummary, keys: Uint8Array) {
         const buffer = new Uint8Array(1 + 5 + 1 + 1 + 4 + players.length * KEY_LEN);
@@ -64,13 +69,18 @@ class ControlPort {
                         break;
                     }
                     default: {
+                        console.error("Unknown error received when creating a new session.");
                         rej("Unknown error.");
                         break;
                     }
                 }
             });
+            this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1", err => {
+                if (!err) return;
+                console.error("Unable to send new session request to data plane.", err);
+                rej("Internal server error. Please try again later.");
+            });
         });
-        this.#client.send(buffer, 0, buffer.length, DATA_PLANE_INT_PORT, "::1");
         return promise;
     }
 }

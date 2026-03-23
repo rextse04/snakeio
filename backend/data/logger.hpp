@@ -28,10 +28,11 @@ namespace snakeio::logger {
         error{std::cout, "\033[31m[ERROR]\033[0m "};
 
     inline void print_packet(const logger& logger, std::span<const std::byte> packet) {
-        logger("{} bytes received:", packet.size());
+        std::osyncstream oss(logger.os_);
+        std::print(oss, "{}{} bytes received:", logger.prefix_, packet.size());
         for (std::byte byte : packet) {
-            std::print(logger.os_, " {}", static_cast<unsigned char>(byte));
+            std::print(oss, " {}", static_cast<unsigned char>(byte));
         }
-        std::println(logger.os_);
+        std::println(oss);
     }
 }

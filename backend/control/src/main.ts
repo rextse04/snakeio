@@ -5,6 +5,7 @@ import {lobby, LobbyPlayer, LobbyRoom, PlayerRole} from "./lobby.js";
 import type {Player} from "./player.js";
 import {randomBytes} from "crypto";
 import {control_port} from "./control_port.js";
+import * as readline from "node:readline";
 
 const server = createServer();
 server.on("error", err => console.error(err));
@@ -250,8 +251,8 @@ wss.on("connection", (ws: PlayerSocket) => {
                         }));
                         return;
                     }
-                    control_port.new_session(result[0].summary(), buffer)
-                        .then(session_id => {
+                    control_port.new_session(result[0].summary(), buffer).then(
+                        session_id => {
                             for (let i = 0; i < result[0].players.length; i++) {
                                 const player = result[0].players[i]!;
                                 player.info.ws.send(JSON.stringify({
@@ -262,13 +263,14 @@ wss.on("connection", (ws: PlayerSocket) => {
                                 }));
                             }
                             lobby.remove_room(result[0].token);
-                        })
-                        .catch((error: string) => {
+                        },
+                        (error: string) => {
                             broadcast_room(result[0], JSON.stringify({
                                 ...msg,
                                 error: error
                             }));
-                        });
+                        }
+                    );
                 });
                 break;
             }
@@ -282,4 +284,16 @@ wss.on("connection", (ws: PlayerSocket) => {
             server_id: ws.info!.id
         }));
     })
-})
+});
+
+const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+});
+rl.on("line", line => {
+    if (line === "exit") {
+        control_port.kill()
+            .catch(err => console.error(err))
+            .finally(() => process.exit(0));
+    }
+});

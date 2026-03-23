@@ -43,7 +43,7 @@ static void control_port(std::stop_source stop_source, int sock) {
         socklen_t client_addr_len = sizeof(client_addr);
         const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
             reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
-        if (recv_len < 1) [[unlikely]] {
+        if (recv_len < 1) {
             if (recv_len == 0) [[unlikely]] {
                 logger::warn("Received empty packet on control port from {}.", client_addr);
             } else if (errno != EINTR) {
@@ -51,8 +51,10 @@ static void control_port(std::stop_source stop_source, int sock) {
             }
             continue;
         }
+        logger::print_packet(logger::debug, std::span(buffer, recv_len));
         switch (static_cast<unsigned char>(buffer[0])) {
             case 0: { // kill
+                logger::info("Received kill command on control port.");
                 std::ignore = stop_source.request_stop();
                 return;
             }

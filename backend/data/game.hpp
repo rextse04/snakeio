@@ -11,6 +11,11 @@
 #include <stop_token>
 #include <chrono>
 
+#ifdef SNAKEIO_BENCHMARK
+#include <benchmark.hpp>
+#include <fstream>
+#endif
+
 namespace snakeio {
     class game {
     private:
@@ -20,7 +25,13 @@ namespace snakeio {
         std::mt19937 rng_{std::random_device()()};
         token_manager<game_max_sessions> sm_;
         std::unique_ptr<std::byte[]> memory_;
+#ifdef SNAKEIO_BENCHMARK
+        std::ofstream tick_bench_ofs_{"tick_bench_ofs.csv"};
+#endif
     public:
+#ifdef SNAKEIO_BENCHMARK
+        benchmark<tick_benchmark_item> tick_bench{tick_bench_ofs_};
+#endif
         // Allocate memory_ and initializes the impl in it.
         game();
         constexpr const auto& session_manager() const noexcept { return sm_; }
