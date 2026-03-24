@@ -1,0 +1,5 @@
+add_library(cpu_spatial_set_lib INTERFACE spatial_set.tpp)
+target_include_directories(cpu_spatial_set_lib INTERFACE ${CMAKE_CURRENT_LIST_DIR})
+
+add_library(cpu_spatial_set_test_lib ALIAS cpu_spatial_set_lib)
+register_test(spatial_set)

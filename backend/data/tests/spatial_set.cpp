@@ -1,11 +1,12 @@
 #include <cpp_utils/tests/common.hpp>
-#include "spatial_set.hpp"
+#include <spatial_set.tpp>
 #include <vector.hpp>
 #include <array>
 #include <random>
 #include <algorithm>
+#include <ranges>
 
-using namespace snakeio::test::spatial_set;
+using spatial_set = snakeio::spatial_set<snakeio::scalar_t(8), 128>;
 namespace utf = boost::unit_test;
 
 namespace snakeio {
@@ -16,37 +17,39 @@ namespace snakeio {
 }
 
 BOOST_AUTO_TEST_CASE(basic_test) {
-    handle* set = init();
-    insert(set, {0, 0});
-    insert(set, {7, 15});
-    insert(set, {23, 15});
-    insert(set, {15, 31});
-    insert(set, {31, 0});
-    insert(set, {15, 20});
-    insert(set, {5, 10});
-    insert(set, {15, 25});
-    insert(set, {20, 10});
-    insert(set, {25, 5});
-    refresh(set);
-    BOOST_CHECK_EQUAL(find(set, {0, 0}, 10).size(), 1);
+    spatial_set set;
+    set.insert({0, 0});
+    set.insert({7, 15});
+    set.insert({23, 15});
+    set.insert({15, 31});
+    set.insert({31, 0});
+    set.insert({15, 20});
+    set.insert({5, 10});
+    set.insert({15, 25});
+    set.insert({20, 10});
+    set.insert({25, 5});
+    set.refresh();
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({0, 0}, 10)), 1);
     {
-        const auto result = find(set, {0, 0}, 15);
-        BOOST_CHECK_EQUAL(result.size(), 2);
-        if (result.size() >= 2) {
-            BOOST_CHECK_EQUAL(*result[0], (snakeio::vector2d{0, 0}));
-            BOOST_CHECK_EQUAL(*result[1], (snakeio::vector2d{5, 10}));
+        auto result = set.find({0, 0}, 15);
+        const auto size = std::ranges::distance(result);
+        BOOST_CHECK_EQUAL(size, 2);
+        if (size == 2) {
+            auto it = result.cbegin();
+            BOOST_CHECK_EQUAL(*it, (snakeio::vector2d{0, 0}));
+            ++it;
+            BOOST_CHECK_EQUAL(*it, (snakeio::vector2d{5, 10}));
         }
     }
-    BOOST_CHECK_EQUAL(find(set, {0, 0}, 20).size(), 3);
-    BOOST_CHECK_EQUAL(find(set, {0, 0}, 25).size(), 4);
-    BOOST_CHECK_EQUAL(find(set, {0, 0}, 30).size(), 8);
-    BOOST_CHECK_EQUAL(find(set, {0, 0}, 35).size(), 10);
-    BOOST_CHECK_EQUAL(find(set, {15, 15}, 5).size(), 0);
-    BOOST_CHECK_EQUAL(find(set, {15, 15}, 10).size(), 4);
-    BOOST_CHECK_EQUAL(find(set, {15, 15}, 15).size(), 7);
-    BOOST_CHECK_EQUAL(find(set, {15, 15}, 20).size(), 8);
-    BOOST_CHECK_EQUAL(find(set, {15, 15}, 25).size(), 10);
-    destroy(set);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({0, 0}, 20)), 3);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({0, 0}, 25)), 4);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({0, 0}, 30)), 8);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({0, 0}, 35)), 10);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({15, 15}, 5)), 0);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({15, 15}, 10)), 4);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({15, 15}, 15)), 7);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({15, 15}, 20)), 8);
+    BOOST_CHECK_EQUAL(std::ranges::distance(set.find({15, 15}, 25)), 10);
 }
 
 struct random_tests_fixture {
@@ -56,13 +59,14 @@ struct random_tests_fixture {
     };
     static constexpr std::size_t queries_size = 1000;
 
-    static inline handle* set;
-    static inline std::array<snakeio::vector2d, objs_size> points;
+    static inline bool ready;
+    static inline spatial_set set;
+    static inline std::array<snakeio::vector2d, spatial_set::max_size()> points;
     static inline std::array<query, queries_size> queries;
     static inline std::array<snakeio::size_t, queries_size> solutions;
 
     random_tests_fixture() {
-        set = init();
+        if (ready) return;
         std::mt19937 gen(std::random_device{}());
         std::uniform_real_distribution<snakeio::scalar_t>
             x_dist(0, snakeio::game_max_width),
@@ -70,9 +74,9 @@ struct random_tests_fixture {
             r_dist(0, std::max(snakeio::game_max_width/2, snakeio::game_max_height/2));
         for (auto& p : points) {
             p = {x_dist(gen), y_dist(gen)};
-            insert(set, p);
+            set.insert(p);
         }
-        refresh(set);
+        set.refresh();
         for (auto& q : queries) {
             q.center = {x_dist(gen), y_dist(gen)};
             q.radius = r_dist(gen);
@@ -84,8 +88,8 @@ struct random_tests_fixture {
                 return d[0] * d[0] + d[1] * d[1] < q.radius * q.radius;
             });
         }
+        ready = true;
     }
-    ~random_tests_fixture() { destroy(set); }
 };
 std::ostream& operator<<(std::ostream& os, const random_tests_fixture::query& q) {
     os << '(' << q.center << ',' << q.radius << ')';
@@ -96,8 +100,7 @@ BOOST_DATA_TEST_CASE(random_test, utf::data::xrange(random_tests_fixture::querie
     const query& query = queries[idx];
     const size_t solution = solutions[idx];
     BOOST_TEST_CONTEXT(query) {
-        const auto result = find(set, query.center, query.radius);
-        BOOST_CHECK_EQUAL(result.size(), solution);
+        BOOST_CHECK_EQUAL(std::ranges::distance(set.find(query.center, query.radius)), solution);
     }
 }
 BOOST_AUTO_TEST_SUITE_END()

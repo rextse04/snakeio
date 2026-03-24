@@ -1,5 +1,6 @@
 #pragma once
 #include <config.hpp>
+#include <vector.hpp>
 #include <cpp_utils/ranges.hpp>
 #include <cpp_utils/type.hpp>
 #include <array>
@@ -10,10 +11,9 @@
 #include <type_traits>
 #include <functional>
 #include <concepts>
-#include <limits>
 #include <cmath>
 
-namespace snakeio::cpu {
+namespace snakeio {
     // GetPos(const Node& node) -> vector2d.
     // SetPos(Node& node, const vector2d& value):
     // - It is guaranteed that value's lifetime spans at least that of node.
@@ -184,13 +184,7 @@ namespace snakeio::cpu {
             new(nodes_.data() + size_++) value_type(std::forward<Args>(args)...);
         }
         // invalidates all iterators
-        constexpr void refresh() noexcept {
-            std::ranges::sort(nodes_.begin(), nodes_.begin() + size_, {}, [](const value_type& node) {
-                return cell_id(GetPos(node));
-            });
-            SetPos(nodes_[size_], erase_key);
-            ready();
-        }
+        constexpr void refresh() noexcept;
         // UB if any node is inserted or if GetPos(node) is changed for any existing node
         // after the last call to refresh, unless GetPos(node) becomes erase_key for some node.
         // UB if key is outside game window.

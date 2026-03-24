@@ -1,5 +1,6 @@
 #pragma once
 #include <game.hpp>
+#include "session.hpp"
 
 namespace snakeio {
     struct game::impl {

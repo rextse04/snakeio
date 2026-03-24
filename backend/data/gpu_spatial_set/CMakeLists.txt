@@ -1,0 +1,4 @@
+add_library(gpu_spatial_set_lib INTERFACE spatial_set.tpp)
+target_include_directories(gpu_spatial_set_lib INTERFACE spatial_set.tpp)
+
+register_test(spatial_set)
