@@ -18,10 +18,10 @@
 
 namespace snakeio {
     class game {
-    private:
+    public:
         struct impl;
         using clock = std::chrono::steady_clock;
-
+    private:
         token_manager<game_max_sessions> sm_;
         std::unique_ptr<std::byte[]> memory_;
         // It is guaranteed that all parameters have valid values.

@@ -22,8 +22,8 @@ namespace snakeio {
     constexpr id_t game_max_sessions = 1 << 12;
     constexpr id_t game_max_players = 16;
     constexpr scalar_t game_width_psqp = 2048, game_height_psqp = 1024;
-    constexpr scalar_t game_max_width = game_width_psqp * std::sqrt(game_max_players),
-        game_max_height = game_height_psqp * std::sqrt(game_max_players);
+    constexpr scalar_t game_max_width = game_width_psqp * 4,
+        game_max_height = game_height_psqp * 4;
     constexpr size_t game_init_food_pp = 32;
     constexpr size_t game_max_food_pp = 128, game_max_food = game_max_food_pp * game_max_players;
     constexpr auto game_tick_rate = 20ms;

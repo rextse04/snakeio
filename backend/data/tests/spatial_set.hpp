@@ -13,5 +13,5 @@ namespace snakeio::test::spatial_set {
     void destroy(handle* set);
     void insert(handle* set, vector2d pos) noexcept;
     void refresh(handle* set) noexcept;
-    std::vector<const vector2d*> find(const handle* set, vector2d key, scalar_t radius) noexcept;
+    std::vector<vector2d> find(const handle* set, vector2d key, scalar_t radius) noexcept;
 }

@@ -34,8 +34,8 @@ BOOST_AUTO_TEST_CASE(basic_test) {
         const auto result = find(set, {0, 0}, 15);
         BOOST_CHECK_EQUAL(result.size(), 2);
         if (result.size() >= 2) {
-            BOOST_CHECK_EQUAL(*result[0], (snakeio::vector2d{0, 0}));
-            BOOST_CHECK_EQUAL(*result[1], (snakeio::vector2d{5, 10}));
+            BOOST_CHECK_EQUAL(result[0], (snakeio::vector2d{0, 0}));
+            BOOST_CHECK_EQUAL(result[1], (snakeio::vector2d{5, 10}));
         }
     }
     BOOST_CHECK_EQUAL(find(set, {0, 0}, 20).size(), 3);

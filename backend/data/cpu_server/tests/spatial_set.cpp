@@ -1,5 +1,6 @@
 #include <tests/spatial_set.hpp>
 #include <cpu_server/spatial_set.hpp>
+#include <ranges>
 
 namespace snakeio::test::spatial_set {
     using spatial_set = cpu::spatial_set<cell_length, objs_size>;
@@ -18,12 +19,8 @@ namespace snakeio::test::spatial_set {
         auto& set_ = *reinterpret_cast<spatial_set*>(set);
         set_.refresh();
     }
-    std::vector<const vector2d*> find(const handle* set, vector2d key, scalar_t radius) noexcept {
+    std::vector<vector2d> find(const handle* set, vector2d key, scalar_t radius) noexcept {
         auto& set_ = *reinterpret_cast<const spatial_set*>(set);
-        std::vector<const vector2d*> out;
-        for (const auto& p : set_.find(key, radius)) {
-            out.push_back(&p);
-        }
-        return out;
+        return std::ranges::to<std::vector<vector2d>>(set_.find(key, radius));
     }
 }
