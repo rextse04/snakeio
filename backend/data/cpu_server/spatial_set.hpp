@@ -3,7 +3,6 @@
 #include <vector.hpp>
 #include <spatial_set_iterator.hpp>
 #include <cpp_utils/ranges.hpp>
-#include <cpp_utils/type.hpp>
 #include <array>
 #include <span>
 #include <algorithm>

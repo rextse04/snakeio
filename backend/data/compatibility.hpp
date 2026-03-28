@@ -1,3 +1,4 @@
+/* Include this file after all includes involving std or cuda::std. */
 #pragma once
 
 namespace snakeio {

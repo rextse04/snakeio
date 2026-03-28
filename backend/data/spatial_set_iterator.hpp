@@ -128,7 +128,7 @@ namespace snakeio {
     __host__ __device__ constexpr auto make_spatial_set_iterator(BaseIter begin, BaseIter end,
         SizeT row_begin, SizeT row_end, SizeT column_begin, SizeT column_end) noexcept {
         spatial_set_iterator<BaseIter, GetPos, Config> it(begin, end, row_begin, row_end, column_begin, column_end);
-        it.advance_to(row_begin);
+        it.advance_to(Config::cell_id(row_begin, column_begin));
         return it;
     }
     template <spatial_set_absolute_config Config, auto GetPos = stdc::identity{}, std::contiguous_iterator BaseIter>
