@@ -13,7 +13,7 @@
 #include <concepts>
 #include <cmath>
 
-namespace snakeio {
+namespace snakeio::cpu {
     // GetPos(const Node& node) -> vector2d.
     // SetPos(Node& node, const vector2d& value):
     // - It is guaranteed that value's lifetime spans at least that of node.
@@ -21,10 +21,10 @@ namespace snakeio {
     // - Semantic requirement: SetPos(node, value) => GetPos(node) == value.
     template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
         auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& value) { node = value; }>
-    requires requires(const Node& node, Node& m_node, const vector2d& value) {
+    requires requires(const Node& cnode, Node& node, const vector2d& value) {
         requires std::default_initializable<Node>;
-        { GetPos(node) } -> std::convertible_to<vector2d>;
-        { SetPos(m_node, value) };
+        { GetPos(cnode) } -> std::convertible_to<vector2d>;
+        { SetPos(node, value) };
     }
     class spatial_set {
     public:
@@ -125,8 +125,8 @@ namespace snakeio {
                 [](const value_type& node) { return spatial_set::cell_id(GetPos(node)); });
         }
     public:
-        constexpr spatial_set() noexcept = default;
-        constexpr spatial_set(std::initializer_list<value_type> nodes) {
+        constexpr spatial_set() noexcept(std::is_nothrow_constructible_v<value_type>) = default;
+        constexpr spatial_set(std::initializer_list<value_type> nodes) noexcept {
             insert(nodes);
             refresh();
         }
@@ -166,7 +166,7 @@ namespace snakeio {
             unready();
         }
         template <utils::container_compatible_range<value_type> R>
-        constexpr void insert(R&& nodes) noexcept {
+        constexpr void insert(R&& nodes) {
             if constexpr (std::ranges::sized_range<R>) {
                 std::ranges::copy(nodes, nodes_.begin() + size_);
                 size_ += std::ranges::size(nodes);
@@ -180,11 +180,18 @@ namespace snakeio {
         }
         template <typename... Args>
         requires (std::is_constructible_v<value_type, Args&&...>)
-        constexpr void emplace(Args&&... args) noexcept {
+        constexpr void emplace(Args&&... args)
+        noexcept(std::is_nothrow_constructible_v<value_type, Args&&...>) {
             new(nodes_.data() + size_++) value_type(std::forward<Args>(args)...);
         }
         // invalidates all iterators
-        constexpr void refresh() noexcept;
+        constexpr void refresh() noexcept {
+            std::ranges::sort(nodes_.begin(), nodes_.begin() + size_, {}, [](const value_type& node) {
+                return cell_id(GetPos(node));
+            });
+            SetPos(nodes_[size_], erase_key);
+            ready();
+        }
         // UB if any node is inserted or if GetPos(node) is changed for any existing node
         // after the last call to refresh, unless GetPos(node) becomes erase_key for some node.
         // UB if key is outside game window.

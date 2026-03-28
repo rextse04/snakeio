@@ -16,28 +16,19 @@
 using namespace snakeio;
 using namespace snakeio::cpu;
 
-game::game() : memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
+game::game() :
+    memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
     new(memory_.get()) impl;
 }
 
-std::expected<id_t, game::add_session_error> game::add_session(
+void game::add_session(id_t session_id,
     id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     using enum add_session_error;
     impl& impl_ = get_impl();
-    auto session_id = sm_.allocate();
-    if (!session_id) [[unlikely]] {
-        return std::unexpected(no_memory);
-    }
-    session& session = impl_.sessions[*session_id];
+    session& session = impl_.sessions[session_id];
     session.players = human_players + ai_players;
     session.human_players = human_players;
-    if (session.players > game_max_players) [[unlikely]] {
-        return std::unexpected(too_many_players);
-    }
     session.tick = 0;
-    if (max_tick > game_max_tick) [[unlikely]] {
-        return std::unexpected(max_tick_too_big);
-    }
     session.max_tick = max_tick;
     session.width = game_width_psqp * std::sqrt(static_cast<scalar_t>(session.players));
     session.height = game_height_psqp * std::sqrt(static_cast<scalar_t>(session.players));
@@ -46,39 +37,35 @@ std::expected<id_t, game::add_session_error> game::add_session(
     for (id_t i = 0; i < session.players; ++i) {
         // sync not needed here because session is still inactive
         if (i < human_players) {
-            client& client = impl_.clients[*session_id][i];
+            client& client = impl_.clients[session_id][i];
             client.key = keys[i];
             client.tick = -1;
         }
         snake& s = session.snakes[i];
         s.speed = snake_init_speed;
-        s.angle = angle_dist(rng_);
+        s.angle = angle_dist(impl_.rng_);
         s.width = snake_init_width;
         s.frac_length = 2;
         s.score = 0;
         s.boost = 0;
         s.status = {snake_status_t::alive};
         s.human = i < human_players;
-        s.segments[0] = {width_dist(rng_), height_dist(rng_)};
+        s.segments[0] = {width_dist(impl_.rng_), height_dist(impl_.rng_)};
         session.snakes_set.emplace(&s, &s.segments[0]);
-        s.segments[1] = s.segments[0] - vector2d{
-            std::cos(s.angle) * snake_init_speed,
-            std::sin(s.angle) * snake_init_speed
-        };
+        s.segments[1] = s.segments[0] - vector2d{std::cos(s.angle), std::sin(s.angle)} * snake_init_speed;
         session.snakes_set.emplace(&s, &s.segments[1]);
         session.add_segments(s, snake_init_length);
     }
     std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
         session.food_set.insert({
-            vector2d{width_dist(rng_), height_dist(rng_)},
-            food_width_dist(rng_)
+            vector2d{width_dist(impl_.rng_), height_dist(impl_.rng_)},
+            food_width_dist(impl_.rng_)
         });
     }
     session.snakes_set.refresh();
     session.food_set.refresh();
-    sm_.activate(*session_id);
-    return *session_id;
+    sm_.activate(session_id);
 }
 
 void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept {
@@ -164,6 +151,7 @@ namespace {
 }
 void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
     using enum snake_status_t;
+    impl& impl_ = game.get_impl();
     clock::time_point next_tick = clock::now();
     while (!stop_token.stop_requested()) {
         {
@@ -331,10 +319,10 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                         std::uniform_real_distribution<scalar_t> food_width_dist(seg_food_min_width, seg_food_max_width);
                         for (const vector2d& seg : target->segments_view()) {
                             if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
-                            if (std::bernoulli_distribution(seg_to_food_prob)(game.rng_)) {
+                            if (std::bernoulli_distribution(seg_to_food_prob)(impl_.rng_)) {
                                 delta.foods_added[delta.foods_added_size++] = {
                                     .pos = seg,
-                                    .width = food_width_dist(game.rng_)
+                                    .width = food_width_dist(impl_.rng_)
                                 };
                             }
                         }
@@ -375,15 +363,15 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     session.snakes_set.erase(erased_segs);
                     // Add and remove food
                     const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
-                        std::poisson_distribution<size_t>(food_per_player_tick * session.players)(game.rng_));
+                        std::poisson_distribution<size_t>(food_per_player_tick * session.players)(impl_.rng_));
                     std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
                     for (size_t j = 0; j < food_added; ++j) {
                         delta.foods_added[delta.foods_added_size++] = {
                             .pos = {
-                                std::uniform_real_distribution<scalar_t>(0, session.width)(game.rng_),
-                                std::uniform_real_distribution<scalar_t>(0, session.height)(game.rng_)
+                                std::uniform_real_distribution<scalar_t>(0, session.width)(impl_.rng_),
+                                std::uniform_real_distribution<scalar_t>(0, session.height)(impl_.rng_)
                             },
-                            .width = food_width_dist(game.rng_)
+                            .width = food_width_dist(impl_.rng_)
                         };
                     }
                     for (size_t j = 0; j < delta.foods_removed_size; ++j) {

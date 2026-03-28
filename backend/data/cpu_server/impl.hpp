@@ -7,6 +7,7 @@
 
 namespace snakeio {
     struct game::impl {
+        std::mt19937 rng_{std::random_device()()};
         std::array<std::array<cpu::client, game_max_players>, game_max_sessions> clients;
         std::array<cpu::session, game_max_sessions> sessions;
 

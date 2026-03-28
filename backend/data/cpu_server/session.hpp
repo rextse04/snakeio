@@ -1,7 +1,7 @@
 #pragma once
 #include <vector.hpp>
 #include <utils.hpp>
-#include <spatial_set.tpp>
+#include "spatial_set.hpp"
 #include "snake.hpp"
 #include "food.hpp"
 #include <tuple>

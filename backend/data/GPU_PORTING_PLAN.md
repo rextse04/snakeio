@@ -832,37 +832,38 @@ Create deterministic replay logs:
 ## 13. Configuration & Build System
 
 ### CMakeLists.txt Integration
+
 ```cmake
 # backend/data/CMakeLists.txt
 
 option(SNAKEIO_GPU_ENABLED "Enable CUDA GPU acceleration" ON)
 
-if(SNAKEIO_GPU_ENABLED)
+if (SNAKEIO_GPU_ENABLED)
     enable_language(CUDA)
-    
+
     add_library(snakeio_gpu
-        cpu_server/game.cpp
-        gpu_server/game.cu          # New GPU implementation
-        gpu_server/kernels.cu       # Collision, movement, AI, etc.
-        gpu_server/spatial_index.cu # GPU spatial grid
+            cpu_server/game.cpp
+            gpu_server/game.cpp          # New GPU implementation
+            gpu_server/kernels.cu       # Collision, movement, AI, etc.
+            gpu_server/spatial_index.cu # GPU spatial grid
     )
-    
+
     target_compile_options(snakeio_gpu PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-O3 -arch=sm_70>  # Adjust for target GPU
+            $<$<COMPILE_LANGUAGE:CUDA>:-O3 -arch=sm_70>  # Adjust for target GPU
     )
-    
+
     target_link_libraries(snakeio_gpu PUBLIC
-        cudart
-        cub  # NVIDIA CUB for primitives
+            cudart
+            cub  # NVIDIA CUB for primitives
     )
-    
+
     # Validation mode for correctness testing
     target_compile_definitions(snakeio_gpu PRIVATE
-        $<$<CONFIG:Debug>:GPU_VALIDATION_MODE=1>
+            $<$<CONFIG:Debug>:GPU_VALIDATION_MODE=1>
     )
-else()
+else ()
     add_library(snakeio_gpu cpu_server/game.cpp)
-endif()
+endif ()
 ```
 
 ---

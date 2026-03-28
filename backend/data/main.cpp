@@ -9,6 +9,7 @@
 #include <utility>
 #include <span>
 #include <chrono>
+#include <new>
 
 #include "utils.hpp"
 
@@ -74,7 +75,7 @@ static void control_port(std::stop_source stop_source, int sock) {
                 // 1. key_t is an implicit lifetime type
                 // 2. storage is given by an array of unsigned char
                 // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
-                const auto keys = reinterpret_cast<const snakeio::key_t*>(buffer + header_size);
+                const auto keys = std::launder(reinterpret_cast<const snakeio::key_t*>(buffer + header_size));
                 const auto id = game_.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
                 if (id.has_value()) {
                     logger::debug("Session token {} mapped to session ID {}.", token, id.value());

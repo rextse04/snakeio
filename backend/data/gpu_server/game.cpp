@@ -2,8 +2,18 @@
 #include <config.hpp>
 #include <network.hpp>
 #include <packet.hpp>
+#include "game.hpp"
+#include "impl.hpp"
+#include <random>
 
 using namespace snakeio;
+using namespace snakeio::gpu;
+
+game::game() :
+    memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
+    curand_init(std::random_device()(), );
+    new(memory_.get()) impl(curand_init());
+}
 
 void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept {
     impl& impl_ = game.get_impl();
@@ -71,4 +81,11 @@ void game::impl::port(game& game, std::stop_token stop_token, int sock) noexcept
         };
         std::atomic_ref(client.tick).store(tick, std::memory_order::release);
     }
+}
+
+void game::add_session(id_t session_id,
+    id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
+    using enum add_session_error;
+    impl& impl_ = get_impl();
+    gpu::add_session(impl_.sessions, session_id, human_players, ai_players, max_tick, keys);
 }
