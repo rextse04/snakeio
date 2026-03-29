@@ -25,6 +25,7 @@ void game::add_session(id_t session_id,
     id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     using enum add_session_error;
     impl& impl_ = get_impl();
+    auto& rng = impl_.add_session_rng_;
     session& session = impl_.sessions[session_id];
     session.players = human_players + ai_players;
     session.human_players = human_players;
@@ -43,14 +44,14 @@ void game::add_session(id_t session_id,
         }
         snake& s = session.snakes[i];
         s.speed = snake_init_speed;
-        s.angle = angle_dist(impl_.rng_);
+        s.angle = angle_dist(rng);
         s.width = snake_init_width;
         s.frac_length = 2;
         s.score = 0;
         s.boost = 0;
         s.status = {snake_status_t::alive};
         s.human = i < human_players;
-        s.segments[0] = {width_dist(impl_.rng_), height_dist(impl_.rng_)};
+        s.segments[0] = {width_dist(rng), height_dist(rng)};
         session.snakes_set.emplace(&s, &s.segments[0]);
         s.segments[1] = s.segments[0] - vector2d{std::cos(s.angle), std::sin(s.angle)} * snake_init_speed;
         session.snakes_set.emplace(&s, &s.segments[1]);
@@ -59,8 +60,8 @@ void game::add_session(id_t session_id,
     std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
     for (size_t i = 0; i < game_init_food_pp * session.players; ++i) {
         session.food_set.insert({
-            vector2d{width_dist(impl_.rng_), height_dist(impl_.rng_)},
-            food_width_dist(impl_.rng_)
+            vector2d{width_dist(rng), height_dist(rng)},
+            food_width_dist(rng)
         });
     }
     session.snakes_set.refresh();
@@ -152,6 +153,7 @@ namespace {
 void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
     using enum snake_status_t;
     impl& impl_ = game.get_impl();
+    auto& rng = impl_.game_loop_rng_;
     clock::time_point next_tick = clock::now();
     while (!stop_token.stop_requested()) {
         {
@@ -319,10 +321,10 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                         std::uniform_real_distribution<scalar_t> food_width_dist(seg_food_min_width, seg_food_max_width);
                         for (const vector2d& seg : target->segments_view()) {
                             if (session.food_set.size() + delta.foods_added_size >= game_max_food) break;
-                            if (std::bernoulli_distribution(seg_to_food_prob)(impl_.rng_)) {
+                            if (std::bernoulli_distribution(seg_to_food_prob)(rng)) {
                                 delta.foods_added[delta.foods_added_size++] = {
                                     .pos = seg,
-                                    .width = food_width_dist(impl_.rng_)
+                                    .width = food_width_dist(rng)
                                 };
                             }
                         }
@@ -363,15 +365,15 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                     session.snakes_set.erase(erased_segs);
                     // Add and remove food
                     const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
-                        std::poisson_distribution<size_t>(food_per_player_tick * session.players)(impl_.rng_));
+                        std::poisson_distribution<size_t>(food_per_player_tick * session.players)(rng));
                     std::uniform_real_distribution<scalar_t> food_width_dist(gen_food_min_width, gen_food_max_width);
                     for (size_t j = 0; j < food_added; ++j) {
                         delta.foods_added[delta.foods_added_size++] = {
                             .pos = {
-                                std::uniform_real_distribution<scalar_t>(0, session.width)(impl_.rng_),
-                                std::uniform_real_distribution<scalar_t>(0, session.height)(impl_.rng_)
+                                std::uniform_real_distribution<scalar_t>(0, session.width)(rng),
+                                std::uniform_real_distribution<scalar_t>(0, session.height)(rng)
                             },
-                            .width = food_width_dist(impl_.rng_)
+                            .width = food_width_dist(rng)
                         };
                     }
                     for (size_t j = 0; j < delta.foods_removed_size; ++j) {
