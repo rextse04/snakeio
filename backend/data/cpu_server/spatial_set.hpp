@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <functional>
 #include <concepts>
+#include <memory>
 
 namespace snakeio::cpu {
     // GetPos(const Node& node) -> vector2d.
@@ -123,9 +124,12 @@ namespace snakeio::cpu {
         }
         // invalidates all iterators
         constexpr void refresh() noexcept {
-            std::ranges::sort(nodes_.begin(), nodes_.begin() + size_, {}, [](const value_type& node) {
-                return config::cell_id(GetPos(node));
-            });
+            std::array<size_type, ObjsSize> cell_ids;
+            for (size_type i = 0; i < size_; ++i) {
+                cell_ids[i] = config::cell_id(GetPos(nodes_[i]));
+            }
+            auto view = std::views::zip(nodes_ | std::views::take(size_), cell_ids | std::views::take(size_));
+            std::ranges::sort(view, {}, [](const auto& t) { return std::get<1>(t); });
             SetPos(nodes_[size_], config::erase_key);
             ready();
         }
