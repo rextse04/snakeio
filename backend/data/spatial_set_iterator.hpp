@@ -106,6 +106,8 @@ namespace snakeio {
         BaseIter end_;
         size_type row_end_, column_begin_, column_end_;
     public:
+        // UB if [current, end) is not a valid range or if GetPos(*end) is not erase_key,
+        // where erase_key is a key with cell_id larger than all valid values.
         __host__ __device__ constexpr spatial_set_independent_iterator(BaseIter current, BaseIter end,
             size_type row_end, size_type column_begin, size_type column_end) noexcept :
             parent(current), end_(end),
@@ -147,24 +149,27 @@ namespace snakeio {
     public:
         using typename parent::size_type;
     private:
-        IndexIter cell_ids_current_, cell_ids_end_;
+        IndexIter index_current_, index_end_;
         size_type row_end_, column_begin_, column_end_;
     public:
+        // Let size = index_end - index_current.
+        // UB if [current, current + size] is not a valid range or if it does not correspond with [index_current, index_end].
+        // UB if *index_end is not a cell id larger than all valid values.
         __host__ __device__ constexpr spatial_set_dependent_iterator(BaseIter current,
-            IndexIter cell_ids_current, IndexIter cell_ids_end,
+            IndexIter index_current, IndexIter index_end,
             size_type row_end, size_type column_begin, size_type column_end) noexcept :
-            parent(current), cell_ids_current_(cell_ids_current), cell_ids_end_(cell_ids_end),
+            parent(current), index_current_(index_current), index_end_(index_end),
             row_end_(row_end), column_begin_(column_begin), column_end_(column_end) {}
         __host__ __device__ constexpr void advance_to(size_type cell_id) noexcept {
-            const auto adv = stdc::lower_bound(cell_ids_current_, cell_ids_end_, cell_id) - cell_ids_current_;
+            const auto adv = stdc::lower_bound(index_current_, index_end_, cell_id) - index_current_;
             parent::current_ += adv;
-            cell_ids_current_ += adv;
+            index_current_ += adv;
         }
         __host__ __device__ constexpr spatial_set_dependent_iterator& operator++() noexcept {
             ++parent::current_;
-            ++cell_ids_current_;
-            if (*cell_ids_current_ % Config::columns >= column_end_) {
-                const size_type row_id = *cell_ids_current_ / Config::columns;
+            ++index_current_;
+            if (*index_current_ % Config::columns >= column_end_) {
+                const size_type row_id = *index_current_ / Config::columns;
                 advance_to(Config::cell_id(row_id + 1, column_begin_));
             }
             return *this;
@@ -175,7 +180,7 @@ namespace snakeio {
             return temp;
         }
         __host__ __device__ constexpr bool operator==(std::default_sentinel_t) const noexcept {
-            return *cell_ids_current_ / Config::columns >= row_end_;
+            return *index_current_ / Config::columns >= row_end_;
         }
     };
 
@@ -201,6 +206,7 @@ namespace snakeio {
         };
     }
 
+    // Refer to the documentation of spatial_set_independent_iterator for preconditions.
     template <spatial_set_relative_config Config, auto GetPos = stdc::identity{}, std::random_access_iterator BaseIter>
     requires (position_getter_of<decltype(GetPos), typename std::iterator_traits<BaseIter>::reference>)
     __host__ __device__ constexpr auto make_spatial_set_iterator(BaseIter begin, BaseIter end,
@@ -210,13 +216,14 @@ namespace snakeio {
         it.advance_to(Config::cell_id(rect.row_begin, rect.column_begin));
         return it;
     }
+    // Refer to the documentation of spatial_set_dependent_iterator for preconditions.
     template <spatial_set_absolute_config Config,
         std::random_access_iterator BaseIter, spatial_set_index_iterator<Config> IndexIter>
     __host__ __device__ constexpr auto make_spatial_set_iterator(BaseIter begin,
-        IndexIter cell_ids_begin, IndexIter cell_ids_end,
+        IndexIter index_begin, IndexIter index_end,
         const spatial_set_rect<typename Config::size_type>& rect) noexcept {
         spatial_set_dependent_iterator<Config, BaseIter, IndexIter>
-            it(begin, cell_ids_begin, cell_ids_end, rect.row_end, rect.column_begin, rect.column_end);
+            it(begin, index_begin, index_end, rect.row_end, rect.column_begin, rect.column_end);
         it.advance_to(Config::cell_id(rect.row_begin, rect.column_begin));
         return it;
     }

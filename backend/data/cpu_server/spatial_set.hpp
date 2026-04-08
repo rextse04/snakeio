@@ -122,6 +122,7 @@ namespace snakeio::cpu {
         constexpr void emplace(Args&&... args)
         noexcept(std::is_nothrow_constructible_v<value_type, Args&&...>) {
             new(nodes_.data() + size_++) value_type(std::forward<Args>(args)...);
+            unready();
         }
         // Invalidates all iterators. UB if std::ranges::size(index_rng) <= max_size.
         constexpr void refresh(spatial_set_index_range<config> auto&& index_rng) noexcept {
@@ -141,8 +142,7 @@ namespace snakeio::cpu {
             refresh(index_arr);
         }
         // UB if any node is inserted or if GetPos(node) is changed for any existing node
-        // after the last call to refresh, unless GetPos(node) becomes erase_key for some node.
-        // UB if key is outside game window.
+        // after the last call to refresh.
         constexpr auto find_possible(this auto&& self, const key_type& key, scalar_t radius = 0) noexcept {
             self.check_ready();
             const auto rect = bounding_rect<config>(key, radius);
@@ -150,6 +150,8 @@ namespace snakeio::cpu {
                 make_spatial_set_iterator<config, GetPos>(self.begin(), self.end(), rect),
                 std::default_sentinel);
         }
+        // UB if any node is inserted or if GetPos(node) is changed for any existing node
+        // after the last call to refresh.
         // UB if index_rng[0:size_+1] does not represent the cell ids of corresponding nodes in nodes_.
         constexpr auto find_possible(this auto&& self, spatial_set_index_range<config> auto&& index_rng,
             const key_type& key, scalar_t radius = 0) noexcept {

@@ -57,6 +57,8 @@ BOOST_AUTO_TEST_CASE(basic_test) {
     const auto ans = find(set, index_array, queries);
     const auto sizes = ans | std::views::transform([](const auto& a) { return a.size(); });
     BOOST_CHECK_EQUAL_COLLECTIONS(sizes.begin(), sizes.end(), std::begin(expected_sizes), std::end(expected_sizes));
+    BOOST_CHECK_EQUAL(find(set, index_array, {{-1, -1}, 2}).size(), 1);
+    BOOST_CHECK_EQUAL(find(set, index_array, {{1E6, 1E6}, 1}).size(), 0);
     destroy(set, index_array);
 }
 
