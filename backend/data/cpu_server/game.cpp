@@ -141,8 +141,10 @@ namespace {
     void sync_snake_dims(snake_basic& snake) noexcept {
         const auto progress = (snake.frac_length - snake_init_length) / (snake_max_length - snake_init_length);
         const scalar_t scaled = 1 - (1 - progress) * (1 - progress); // ease out quadratic
-        snake.speed = (snake_init_speed + (snake_min_speed - snake_init_speed) * scaled)
-            * (1 + static_cast<bool>(snake.boost) * (snake_boost_speed_factor - 1));
+        snake.speed = snake_init_speed + (snake_min_speed - snake_init_speed) * scaled;
+        if (snake.boost) {
+            snake.speed *= snake_boost_speed_factor;
+        }
         snake.width = snake_init_width + (snake_max_width - snake_init_width) * scaled;
     }
     struct erased_snake {
@@ -217,6 +219,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                 } else {
                     out_delta delta;
                     bool snapshot_requested = false;
+                    session::snakes_set_type::index_array_type snakes_set_index_array;
                     // AIs play
                     for (size_t j = 0; j < session.players; ++j) {
                         snake& snake = session.snakes[j];
@@ -291,7 +294,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                             std::sin(snake.angle) * snake.speed
                         };
                     }
-                    session.snakes_set.refresh();
+                    session.snakes_set.refresh(snakes_set_index_array);
                     // Detect collision with wall or other snakes
                     std::array<erased_snake, game_max_players> to_erase;
                     id_t to_erase_size = 0;
@@ -304,7 +307,8 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                             to_erase[to_erase_size++] = {&snake, killed_by_wall};
                             continue;
                             }
-                        for (const auto [other_snake, seg] : session.snakes_set.find_possible(head, snake_max_width * 2)) {
+                        for (const auto [other_snake, seg] :
+                            session.snakes_set.find_possible(snakes_set_index_array, head, snake_max_width * 2)) {
                             if (other_snake == &snake) continue;
                             const scalar_t req = snake.width + other_snake->width;
                             if ((*seg - head).norm_sq() > req * req)
@@ -328,11 +332,11 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                                 };
                             }
                         }
-                        std::ranges::fill(target->segments_view(), decltype(session::snakes_set)::erase_key);
+                        std::ranges::fill(target->segments_view(), session.snakes_set.erase_key);
                         erased_segs += target->length();
                         target->frac_length = 0;
                     }
-                    session.snakes_set.refresh();
+                    session.snakes_set.refresh(snakes_set_index_array);
                     session.snakes_set.erase(erased_segs);
                     // Detect collision with food and recalculate attributes
                     std::array<food*, game_max_food> erased_foods;
@@ -361,7 +365,7 @@ void game::impl::game_loop(game& game, std::stop_token stop_token, int sock) noe
                             erased_segs += 1;
                         }
                     }
-                    session.snakes_set.refresh();
+                    session.snakes_set.refresh(snakes_set_index_array);
                     session.snakes_set.erase(erased_segs);
                     // Add and remove food
                     const auto food_added = std::min(game_max_food - session.food_set.size() - delta.foods_added_size,
