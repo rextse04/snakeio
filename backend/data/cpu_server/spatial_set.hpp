@@ -34,6 +34,7 @@ namespace snakeio::cpu {
         using typename config::difference_type;
         using typename config::key_type;
         using value_type = Node;
+        using index_array_type = std::array<size_type, ObjsSize + 1>;
         using iterator = std::span<value_type>::iterator;
         using const_iterator = std::span<const value_type>::iterator;
         using reverse_iterator = std::span<value_type>::reverse_iterator;
@@ -122,33 +123,59 @@ namespace snakeio::cpu {
         noexcept(std::is_nothrow_constructible_v<value_type, Args&&...>) {
             new(nodes_.data() + size_++) value_type(std::forward<Args>(args)...);
         }
-        // invalidates all iterators
-        constexpr void refresh() noexcept {
-            std::array<size_type, ObjsSize> cell_ids;
+        // Invalidates all iterators. UB if std::ranges::size(index_rng) <= max_size.
+        constexpr void refresh(spatial_set_index_range<config> auto&& index_rng) noexcept {
+            const auto it = std::ranges::begin(index_rng);
             for (size_type i = 0; i < size_; ++i) {
-                cell_ids[i] = config::cell_id(GetPos(nodes_[i]));
+                it[i] = config::cell_id(GetPos(nodes_[i]));
             }
-            auto view = std::views::zip(nodes_ | std::views::take(size_), cell_ids | std::views::take(size_));
+            auto view = std::views::zip(nodes_ | std::views::take(size_), index_rng | std::views::take(size_));
             std::ranges::sort(view, {}, [](const auto& t) { return std::get<1>(t); });
             SetPos(nodes_[size_], config::erase_key);
+            it[size_] = config::cell_id(config::erase_key);
             ready();
+        }
+        // See refresh(R&&) for documentation. Uses an array allocated on the stack as index_rng.
+        constexpr void refresh() noexcept {
+            index_array_type index_arr;
+            refresh(index_arr);
         }
         // UB if any node is inserted or if GetPos(node) is changed for any existing node
         // after the last call to refresh, unless GetPos(node) becomes erase_key for some node.
         // UB if key is outside game window.
-        template <typename Self>
-        constexpr auto find_possible(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
+        constexpr auto find_possible(this auto&& self, const key_type& key, scalar_t radius = 0) noexcept {
             self.check_ready();
+            const auto rect = bounding_rect<config>(key, radius);
             return std::ranges::subrange(
-                make_spatial_set_iterator<config, GetPos>(self.begin(), self.end(), key, radius),
+                make_spatial_set_iterator<config, GetPos>(self.begin(), self.end(), rect),
                 std::default_sentinel);
         }
-        // See documentation on find_possible.
-        template <typename Self>
-        constexpr auto find(this Self&& self, const key_type& key, scalar_t radius = 0) noexcept {
-            return self.find_possible(key, radius) | std::views::filter([key, radius](const value_type& t) {
+        // UB if index_rng[0:size_+1] does not represent the cell ids of corresponding nodes in nodes_.
+        constexpr auto find_possible(this auto&& self, spatial_set_index_range<config> auto&& index_rng,
+            const key_type& key, scalar_t radius = 0) noexcept {
+            self.check_ready();
+            const auto rect = bounding_rect<config>(key, radius);
+            const auto cell_ids_begin = std::ranges::begin(index_rng);
+
+            return std::ranges::subrange(
+                make_spatial_set_iterator<config>(self.begin(), cell_ids_begin, cell_ids_begin + self.size_, rect),
+                std::default_sentinel);
+        }
+    private:
+        static constexpr auto find_filter(const key_type& key, scalar_t radius) noexcept {
+            return std::views::filter([key, radius](const value_type& t) {
                 return (static_cast<vector2d>(GetPos(t)) - key).norm_sq() < radius * radius;
             });
+        }
+    public:
+        // See documentation on find_possible.
+        constexpr auto find(this auto&& self, const key_type& key, scalar_t radius = 0) noexcept {
+            return self.find_possible(key, radius) | find_filter(key, radius);
+        }
+        // See documentation on find_possible.
+        constexpr auto find(this auto&& self, spatial_set_index_range<config> auto&& index_rng,
+            const key_type& key, scalar_t radius = 0) noexcept {
+            return self.find_possible(index_rng, key, radius) | find_filter(key, radius);
         }
     };
 };
