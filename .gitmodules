@@ -1,6 +1,3 @@
 [submodule "backend/data/cpp_utils"]
 	path = backend/data/cpp_utils
 	url = https://github.com/rextse04/cpp_utils.git
-[submodule "backend/data/cccl"]
-	path = backend/data/cccl
-	url = https://github.com/NVIDIA/cccl.git
