@@ -14,13 +14,14 @@ namespace snakeio::test::spatial_set {
     handle* init();
     index_array* make_index_array();
     void destroy(handle* set, index_array* index_array);
-    void insert(handle* set, vector2d value);
+    void insert(handle* set, vector2d value) noexcept;
     void insert(handle* set, std::span<const vector2d> values) noexcept;
     void refresh(handle* set, index_array* index_array) noexcept;
     struct query {
         vector2d key;
         scalar_t radius;
     };
-    std::vector<vector2d> find(const handle* set, const index_array* index_array, const query& query) noexcept;
-    std::vector<std::vector<vector2d>> find(const handle* set, const index_array* index_array, std::span<const query> queries) noexcept;
+    std::vector<vector2d> find(const handle* set, const index_array* index_array, const query& query);
+    std::vector<std::vector<vector2d>> find(const handle* set, const index_array* index_array,
+        std::span<const query> queries);
 }

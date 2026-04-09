@@ -14,7 +14,7 @@ namespace snakeio::test::spatial_set {
         delete reinterpret_cast<spatial_set*>(set);
         delete reinterpret_cast<spatial_set::index_array_type*>(index_array);
     }
-    void insert(handle* set, vector2d value) {
+    void insert(handle* set, vector2d value) noexcept {
         auto& set_ = *reinterpret_cast<spatial_set*>(set);
         set_.insert(value);
     }
@@ -23,7 +23,7 @@ namespace snakeio::test::spatial_set {
         set_.insert(values);
     }
     std::vector<std::vector<vector2d>> find(const handle* set, const index_array* index_array,
-        std::span<const query> queries) noexcept {
+        std::span<const query> queries) {
         std::vector<std::vector<vector2d>> out;
         out.reserve(queries.size());
         for (const auto& query : queries) {
