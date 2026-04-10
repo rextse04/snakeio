@@ -59,7 +59,8 @@ namespace snakeio {
             add_session(*session_id, human_players, ai_players, max_tick, keys);
             return *session_id;
         }
-        void bind(std::stop_token stop_token, int sock) noexcept;
+        void port(std::stop_token stop_token, int sock) noexcept;
+        void game_tick(std::stop_token stop_token, int sock) noexcept;
         template <typename Self>
         constexpr utils::follow_t<Self, impl&> get_impl(this Self&& self) noexcept {
             return *reinterpret_cast<impl*>(self.memory_.get());

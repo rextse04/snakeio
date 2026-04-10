@@ -28,7 +28,7 @@ namespace snakeio {
                 free_list_[i] = i;
             }
         }
-        // See avail_size() for the approximation of the available size.
+        // Approximation of session ids in use (not necessarily activated).
         constexpr id_t in_use_size() const noexcept {
             return IDBound - avail_size();
         }

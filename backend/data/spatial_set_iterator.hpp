@@ -189,7 +189,8 @@ namespace snakeio {
         SizeT row_begin, row_end, column_begin, column_end;
     };
     template <spatial_set_absolute_config Config>
-    spatial_set_rect<typename Config::size_type> bounding_rect(const vector2d& key, scalar_t radius) noexcept {
+    __host__ __device__ auto bounding_rect(const vector2d& key, scalar_t radius) noexcept
+    -> spatial_set_rect<typename Config::size_type> {
         using size_type = Config::size_type;
         const size_type cell_radius =
                 static_cast<size_type>(radius / Config::cell_length) + (stdc::fmod(radius, Config::cell_length) > 0);

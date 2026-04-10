@@ -1,6 +1,8 @@
 #include <game.hpp>
 #include <logger.hpp>
 #include <network.hpp>
+#include <utils.hpp>
+#include <benchmark.hpp>
 #include <cstddef>
 #include <cstring>
 #include <string_view>
@@ -11,121 +13,133 @@
 #include <chrono>
 #include <new>
 
-#include "utils.hpp"
-
 using namespace snakeio;
 
 game game_;
 
-[[nodiscard]] static int open_port(std::string_view name, const sockaddr_in6& addr) {
-    const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        logger::error("Failed to create {} socket.", name);
+namespace {
+    [[nodiscard]] int open_port(std::string_view name, const sockaddr_in6& addr) {
+        const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            logger::error("Failed to create {} socket.", name);
+            return sock;
+        }
+        constexpr int off = 0;
+        if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
+            logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
+        }
+        if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
+            logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
+            return -1;
+        }
+        sockaddr_storage addr_storage{};
+        std::memcpy(&addr_storage, &addr, sizeof(addr));
+        logger::info("{} port listening on {}.", name, addr_storage);
         return sock;
     }
-    constexpr int off = 0;
-    if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
-        logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
-    }
-    if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
-        return -1;
-    }
-    sockaddr_storage addr_storage{};
-    std::memcpy(&addr_storage, &addr, sizeof(addr));
-    logger::info("{} port listening on {}.", name, addr_storage);
-    return sock;
-}
 
-static void control_port(std::stop_source stop_source, int sock) {
-    std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
-    sockaddr_storage client_addr{};
-    while (true) {
-        socklen_t client_addr_len = sizeof(client_addr);
-        const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
-            reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
-        if (recv_len < 1) {
-            if (recv_len == 0) [[unlikely]] {
-                logger::warn("Received empty packet on control port from {}.", client_addr);
-            } else if (errno != EINTR) {
-                logger::warn("recvfrom failed on control port: {}.", std::strerror(errno));
+    void control_port(std::stop_source stop_source, int sock) {
+        std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
+        sockaddr_storage client_addr{};
+        while (true) {
+            socklen_t client_addr_len = sizeof(client_addr);
+            const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
+                reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
+            if (recv_len < 1) {
+                if (recv_len == 0) [[unlikely]] {
+                    logger::warn("Received empty packet on control port from {}.", client_addr);
+                } else if (errno != EINTR) {
+                    logger::warn("recvfrom failed on control port: {}.", std::strerror(errno));
+                }
+                continue;
+            }
+            logger::print_packet(logger::debug, std::span(buffer, recv_len));
+            switch (static_cast<unsigned char>(buffer[0])) {
+                case 0: { // kill
+                    logger::info("Received kill command on control port.");
+                    std::ignore = stop_source.request_stop();
+                    return;
+                }
+                case 1: { // new session token
+                    constexpr std::size_t header_size = 1 + 5 + 1 + 1 + 4;
+                    if (recv_len < header_size) {
+                        goto invalid_format;
+                    }
+                    const std::string_view token(reinterpret_cast<char*>(buffer + 1), 5);
+                    const auto human_players = static_cast<unsigned char>(buffer[6]),
+                        ai_players = static_cast<unsigned char>(buffer[7]);
+                    const tick_t max_tick = load_32(std::span<const std::byte, 4>(buffer + 8, 4));
+                    if (recv_len < header_size + human_players * sizeof(snakeio::key_t)) {
+                        goto invalid_format;
+                    }
+                    // This is defined because
+                    // 1. key_t is an implicit lifetime type
+                    // 2. storage is given by an array of unsigned char
+                    // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
+                    const auto keys = std::launder(reinterpret_cast<const snakeio::key_t*>(buffer + header_size));
+                    const auto id = game_.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
+                    if (id.has_value()) {
+                        logger::debug("Session token {} mapped to session ID {}.", token, id.value());
+                        buffer[6] = std::byte(0);
+                        store_32(std::span<std::byte, 4>(buffer + 8, 4), id.value());
+                    } else {
+                        std::string_view error;
+                        switch (id.error()) {
+                            using enum game::add_session_error;
+                            case no_memory: {
+                                error = "no memory";
+                                break;
+                            }
+                            case too_many_players: {
+                                error = "too many players";
+                                break;
+                            }
+                            case max_tick_too_big: {
+                                error = "max tick too big";
+                                break;
+                            }
+                            case unknown_error: {
+                                error = "unknown error";
+                                break;
+                            }
+                            default: std::unreachable();
+                        }
+                        logger::warn("Failed to create new session: {}.", error);
+                        buffer[6] = static_cast<std::byte>(id.error());
+                    }
+                    sendto(sock, std::span(buffer, header_size + 4), client_addr);
+                    break;
+                }
+                default: {
+                    logger::warn("Received unknown command on control port.");
+                    logger::print_packet(logger::debug, std::span(buffer, recv_len));
+                    break;
+                }
             }
             continue;
+            invalid_format:
+            logger::warn("Received invalid command format on control port.");
+            logger::print_packet(logger::debug, std::span(buffer, recv_len));
         }
-        logger::print_packet(logger::debug, std::span(buffer, recv_len));
-        switch (static_cast<unsigned char>(buffer[0])) {
-            case 0: { // kill
-                logger::info("Received kill command on control port.");
-                std::ignore = stop_source.request_stop();
-                return;
-            }
-            case 1: { // new session token
-                constexpr std::size_t header_size = 1 + 5 + 1 + 1 + 4;
-                if (recv_len < header_size) {
-                    goto invalid_format;
-                }
-                const std::string_view token(reinterpret_cast<char*>(buffer + 1), 5);
-                const auto human_players = static_cast<unsigned char>(buffer[6]),
-                    ai_players = static_cast<unsigned char>(buffer[7]);
-                const tick_t max_tick = load_32(std::span<const std::byte, 4>(buffer + 8, 4));
-                if (recv_len < header_size + human_players * sizeof(snakeio::key_t)) {
-                    goto invalid_format;
-                }
-                // This is defined because
-                // 1. key_t is an implicit lifetime type
-                // 2. storage is given by an array of unsigned char
-                // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
-                const auto keys = std::launder(reinterpret_cast<const snakeio::key_t*>(buffer + header_size));
-                const auto id = game_.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
-                if (id.has_value()) {
-                    logger::debug("Session token {} mapped to session ID {}.", token, id.value());
-                    buffer[6] = std::byte(0);
-                    store_32(std::span<std::byte, 4>(buffer + 8, 4), id.value());
-                } else {
-                    std::string_view error;
-                    switch (id.error()) {
-                        using enum game::add_session_error;
-                        case no_memory: {
-                            error = "no memory";
-                            break;
-                        }
-                        case too_many_players: {
-                            error = "too many players";
-                            break;
-                        }
-                        case max_tick_too_big: {
-                            error = "max tick too big";
-                            break;
-                        }
-                        case unknown_error: {
-                            error = "unknown error";
-                            break;
-                        }
-                        default: std::unreachable();
-                    }
-                    logger::warn("Failed to create new session: {}.", error);
-                    buffer[6] = static_cast<std::byte>(id.error());
-                }
-                sendto(sock, std::span(buffer, header_size + 4), client_addr);
-                break;
-            }
-            default: {
-                logger::warn("Received unknown command on control port.");
-                logger::print_packet(logger::debug, std::span(buffer, recv_len));
-                break;
-            }
-        }
-        continue;
-        invalid_format:
-        logger::warn("Received invalid command format on control port.");
-        logger::print_packet(logger::debug, std::span(buffer, recv_len));
     }
-}
 
-static void data_port(std::stop_token stop_token, int sock) {
-    constexpr timeval read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout));
-    game_.bind(std::move(stop_token), sock);
+    void data_port(std::stop_token stop_token, int sock) {
+        game_.port(std::move(stop_token), sock);
+    }
+
+    void game_loop(std::stop_token stop_token, int sock) noexcept {
+        auto next_tick = game::clock::now();
+        while (!stop_token.stop_requested()) {
+            {
+#ifdef SNAKEIO_BENCHMARK
+                benchmarker bencher(game_.tick_bench, game_.session_manager().in_use_size());
+#endif
+                game_.game_tick(std::move(stop_token), sock);
+            }
+            next_tick += game_tick_rate;
+            std::this_thread::sleep_until(next_tick);
+        }
+    }
 }
 
 int main() {
@@ -142,7 +156,10 @@ int main() {
     if (control_sock < 0 || data_sock < 0) {
         return EXIT_FAILURE;
     }
+    constexpr timeval data_read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
+    setsockopt(data_sock, SOL_SOCKET, SO_RCVTIMEO, &data_read_timeout, sizeof(data_read_timeout));
     std::stop_source stop_source;
     std::jthread control_thread(control_port, stop_source, control_sock),
-        data_thread(data_port, stop_source.get_token(), data_sock);
+        data_thread(data_port, stop_source.get_token(), data_sock),
+        game_thread(game_loop, stop_source.get_token(), data_sock);
 }
