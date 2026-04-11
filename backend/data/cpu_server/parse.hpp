@@ -25,7 +25,7 @@ namespace snakeio::cpu {
 
     struct out_delta {
         size_t foods_added_size = 0, foods_removed_size = 0;
-        std::array<cpu::food, game_max_food> foods_added;
+        std::array<food, game_max_food> foods_added;
         std::array<vector2d, game_max_food> foods_removed;
 
         constexpr auto foods_added_view(this auto&& self) noexcept {
@@ -40,7 +40,7 @@ namespace snakeio::cpu {
     size_t store_snake(std::byte* out, const snake& snake) noexcept;
     size_t store_food(std::byte* out, const food& food) noexcept;
 
-    size_t store_delta(std::byte* out, const session& session, out_delta& delta) noexcept;
+    size_t store_delta(std::byte* out, const session& session, const out_delta& delta) noexcept;
     size_t store_snapshot(std::byte* out, const session& session) noexcept;
     size_t store_lobby_status(std::byte* out, std::span<const in_packet_info> in_packets) noexcept;
     size_t store_termination(std::byte* out, const session& session) noexcept;

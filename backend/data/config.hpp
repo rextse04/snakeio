@@ -12,7 +12,7 @@ namespace snakeio {
     using size_t = unsigned;
     using id_t = std::uint_least32_t;
     using scalar_t = float;
-    static_assert(std::numeric_limits<scalar_t>::is_iec559 && sizeof(scalar_t) == 4);
+    static_assert(std::numeric_limits<scalar_t>::has_quiet_NaN);
     using score_t = std::uint_least32_t;
     using key_t = std::array<std::byte, 32>;
     using tick_t = std::uint_least32_t;
@@ -28,6 +28,7 @@ namespace snakeio {
     constexpr size_t game_max_food_pp = 128, game_max_food = game_max_food_pp * game_max_players;
     constexpr auto game_tick_rate = 20ms;
     constexpr tick_t game_max_tick = 300s / game_tick_rate;
+    constexpr scalar_t game_collision_eps = scalar_t(1)/1024;
 
     constexpr scalar_t snake_init_speed = 6, snake_init_width = 8;
     constexpr scalar_t snake_min_speed = snake_init_speed / 2, snake_max_width = snake_init_width * 6;

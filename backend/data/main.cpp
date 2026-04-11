@@ -134,7 +134,7 @@ namespace {
 #ifdef SNAKEIO_BENCHMARK
                 benchmarker bencher(game_.tick_bench, game_.session_manager().in_use_size());
 #endif
-                game_.game_tick(std::move(stop_token), sock);
+                game_.tick(std::move(stop_token), sock);
             }
             next_tick += game_tick_rate;
             std::this_thread::sleep_until(next_tick);

@@ -36,7 +36,7 @@ snakeio::size_t cpu::store_food(std::byte* out, const food& food) noexcept {
     return bytes.size();
 }
 
-snakeio::size_t cpu::store_delta(std::byte* const out, const session& session, out_delta& delta) noexcept {
+snakeio::size_t cpu::store_delta(std::byte* const out, const session& session, const out_delta& delta) noexcept {
     std::byte* it = out;
     store_32(std::span<std::byte, 4>(it, 4), 0);
     it += 4;

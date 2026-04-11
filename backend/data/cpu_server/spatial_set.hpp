@@ -19,16 +19,16 @@ namespace snakeio::cpu {
     // - It is guaranteed that value's lifetime spans at least that of node.
     // - It is guaranteed that setPos will not be used on valid nodes.
     // - Semantic requirement: SetPos(node, value) => GetPos(node) == value.
-    template <scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
+    template <vector2d WorldDim, scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
         auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& value) { node = value; }>
     requires requires(Node& node, const vector2d& value) {
         requires std::default_initializable<Node>;
         requires position_getter_of<decltype(GetPos), Node>;
         { SetPos(node, value) };
     }
-    class spatial_set : public spatial_set_default_config<CellLength> {
+    class spatial_set : public spatial_set_default_config<WorldDim, CellLength> {
     private:
-        using config = spatial_set_default_config<CellLength>;
+        using config = spatial_set_default_config<WorldDim, CellLength>;
     public:
         using typename config::size_type;
         using typename config::difference_type;

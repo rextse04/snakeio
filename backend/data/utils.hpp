@@ -69,12 +69,12 @@ namespace snakeio {
     }
     constexpr void store_float32(std::span<std::byte, 4> out, float value) noexcept {
         using enum std::endian;
-        if constexpr (sizeof(float) == 4) {
-            if constexpr (native == little) {
-                std::ranges::copy(std::bit_cast<std::array<std::byte, 4>>(value), out.begin());
-            } else if constexpr (native == big) {
-                std::ranges::reverse_copy(std::bit_cast<std::array<std::byte, 4>>(value), out.begin());
-            }
+        static_assert(sizeof(float) == 4);
+        static_assert(native == little || native == big);
+        if constexpr (native == little) {
+            std::ranges::copy(std::bit_cast<std::array<std::byte, 4>>(value), out.begin());
+        } else if constexpr (native == big) {
+            std::ranges::reverse_copy(std::bit_cast<std::array<std::byte, 4>>(value), out.begin());
         }
     }
 

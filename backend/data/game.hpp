@@ -21,6 +21,7 @@ namespace snakeio {
     public:
         struct impl;
         using clock = std::chrono::steady_clock;
+        using random_engine = std::mt19937;
     private:
         token_manager<game_max_sessions> sm_;
         std::unique_ptr<std::byte[]> memory_;
@@ -60,7 +61,7 @@ namespace snakeio {
             return *session_id;
         }
         void port(std::stop_token stop_token, int sock) noexcept;
-        void game_tick(std::stop_token stop_token, int sock) noexcept;
+        void tick(std::stop_token stop_token, int sock) noexcept;
         template <typename Self>
         constexpr utils::follow_t<Self, impl&> get_impl(this Self&& self) noexcept {
             return *reinterpret_cast<impl*>(self.memory_.get());

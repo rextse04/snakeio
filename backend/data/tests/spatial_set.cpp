@@ -1,5 +1,6 @@
 #include <cpp_utils/tests/common.hpp>
 #include "spatial_set.hpp"
+#include "print_vector.hpp"
 #include <vector.hpp>
 #include <array>
 #include <random>
@@ -8,13 +9,6 @@
 
 using namespace snakeio::test::spatial_set;
 namespace utf = boost::unit_test;
-
-namespace snakeio {
-    std::ostream& operator<<(std::ostream& os, const vector2d& v) {
-        os << '(' << v[0] << ',' << v[1] << ')';
-        return os;
-    }
-}
 
 BOOST_AUTO_TEST_CASE(basic_test) {
     handle* set = init();
