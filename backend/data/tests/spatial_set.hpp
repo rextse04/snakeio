@@ -7,7 +7,8 @@
 namespace snakeio::test::spatial_set {
     struct handle;
     struct index_array;
-    
+
+    constexpr vector2d world_dim = {32, 32};
     constexpr scalar_t cell_length = 8;
     constexpr size_t objs_size = 128;
 

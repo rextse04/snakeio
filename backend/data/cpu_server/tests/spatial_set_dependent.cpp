@@ -1,9 +1,7 @@
-#include <tests/spatial_set.hpp>
-#include <cpu_server/spatial_set.hpp>
+#include "spatial_set_common.hpp"
 #include <ranges>
 
 namespace snakeio::test::spatial_set {
-    using spatial_set = cpu::spatial_set<cell_length, objs_size>;
     using index_array_type = spatial_set::index_array_type;
 
     void refresh(handle* set, index_array* index_array) noexcept {
