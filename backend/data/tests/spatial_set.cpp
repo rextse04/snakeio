@@ -80,9 +80,9 @@ struct random_tests_fixture {
         index_arr = make_index_array();
         std::mt19937 gen(std::random_device{}());
         std::uniform_real_distribution<scalar_t>
-            x_dist(0, world_dim[0]),
-            y_dist(0, world_dim[1]),
-            r_dist(0, std::max(world_dim[0]/2, world_dim[1]/2));
+            x_dist(0, world_width),
+            y_dist(0, world_height),
+            r_dist(0, std::max(world_width/2, world_height/2));
         for (auto& p : points) {
             p = {x_dist(gen), y_dist(gen)};
         }

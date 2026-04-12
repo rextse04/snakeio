@@ -10,6 +10,11 @@ if (CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_STANDARD 20)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda")
+
+    include_directories(cccl/thrust)
+    include_directories(cccl/libcudacxx/include)
+    include_directories(cccl/cub)
 endif()
 
 include_directories(.)

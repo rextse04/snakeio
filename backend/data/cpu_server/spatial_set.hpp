@@ -15,20 +15,20 @@
 
 namespace snakeio::cpu {
     // GetPos(const Node& node) -> vector2d.
-    // SetPos(Node& node, const vector2d& value):
-    // - It is guaranteed that value's lifetime spans at least that of node.
-    // - It is guaranteed that setPos will not be used on valid nodes.
-    // - Semantic requirement: SetPos(node, value) => GetPos(node) == value.
-    template <vector2d WorldDim, scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
-        auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& value) { node = value; }>
-    requires requires(Node& node, const vector2d& value) {
+    // SetPos(Node& node, const vector2d& key):
+    // - It is guaranteed that key's lifetime spans at least that of node.
+    // - It is guaranteed that setPos will not be used on active nodes.
+    // - Semantic requirement: SetPos(node, key) => GetPos(node) == key.
+    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
+        auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& key) { node = key; }>
+    requires requires(Node& node, const vector2d& key) {
         requires std::default_initializable<Node>;
         requires position_getter_of<decltype(GetPos), Node>;
-        { SetPos(node, value) };
+        { SetPos(node, key) };
     }
-    class spatial_set : public spatial_set_default_config<WorldDim, CellLength> {
+    class spatial_set : public spatial_set_default_config<WorldWidth, WorldHeight, CellLength> {
     private:
-        using config = spatial_set_default_config<WorldDim, CellLength>;
+        using config = spatial_set_default_config<WorldWidth, WorldHeight, CellLength>;
     public:
         using typename config::size_type;
         using typename config::difference_type;

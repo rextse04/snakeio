@@ -1,6 +1,7 @@
 #include "game.hpp"
 #include "impl.hpp"
 #include "session.cuh"
+#include "spatial_set_.cuh"
 #include <random>
 #include <cmath>
 #include <algorithm>

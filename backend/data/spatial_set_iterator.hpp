@@ -45,7 +45,7 @@ namespace snakeio {
     concept spatial_set_index_range =
         std::ranges::random_access_range<R> && utils::container_compatible_range<R, typename Config::size_type>;
 
-    template <vector2d WorldDim, scalar_t CellLength>
+    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength>
     struct spatial_set_default_config {
         using size_type = size_t;
         using difference_type = std::make_signed_t<size_type>;
@@ -55,8 +55,8 @@ namespace snakeio {
             cell_length = CellLength,
             cell_area = cell_length * cell_length;
         static constexpr size_type
-            rows = WorldDim[1] / cell_length + 1,
-            columns = WorldDim[0] / cell_length + 1,
+            rows = WorldWidth / cell_length + 1,
+            columns = WorldHeight / cell_length + 1,
             cells = rows * columns;
         static constexpr key_type erase_key = {columns * cell_length, rows * cell_length};
 
@@ -72,6 +72,7 @@ namespace snakeio {
         __host__ __device__ static constexpr size_type cell_id(const vector2d& key) noexcept {
             return cell_id(row_id(key), column_id(key));
         }
+        static constexpr size_type erase_index = cell_id(erase_key);
     };
 
     namespace detail {

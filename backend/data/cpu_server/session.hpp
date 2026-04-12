@@ -9,12 +9,13 @@
 
 namespace snakeio::cpu {
     struct session {
-        static constexpr vector2d game_dim{game_max_width, game_max_height};
-        using snakes_set_type = spatial_set<game_dim, snake_max_width * 2, snake_max_length * game_max_players,
+        using snakes_set_type = spatial_set<game_max_width, game_max_height,
+            snake_max_width * 2, snake_max_length * game_max_players,
             std::tuple<snake*, vector2d*>,
             [](const auto& node) { return *std::get<1>(node); },
             [](auto& node, const vector2d& pos) { std::get<1>(node) = const_cast<vector2d*>(&pos); }>;
-        using food_set_type = spatial_set<game_dim, snake_max_width + food_max_width, game_max_food,
+        using food_set_type = spatial_set<game_max_width, game_max_height,
+            snake_max_width + food_max_width, game_max_food,
             food,
             [](const food& node) { return node.pos; },
             [](food& node, const vector2d& value) { node.pos = value; }>;
