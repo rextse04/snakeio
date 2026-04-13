@@ -5,43 +5,47 @@
 #include <cstddef>
 #include <type_traits>
 #include <algorithm>
-#include <cuda/std/array>
 #include <cuda/iterator>
 #include <cub/device/device_segmented_sort.cuh>
 
 namespace snakeio::gpu {
     namespace detail {
         template <typename Node>
-        __device__ void default_setter(Node& node, vector2d key) {
+        __device__ void default_setter(Node& node, vector2d key) noexcept {
             node = key;
         }
-        // Blocks: BatchSize
-        // Threads: ObjsSize
+        // Blocks: T::grid_dim, NodesSize / T::block_dim
+        // Threads: T::block_dim
         template <typename T>
         __global__ void init(T self) {
             const typename T::size_type batch_offset = T::batch_offset(blockIdx.x),
-                i = batch_offset + threadIdx.x;
-            if (threadIdx.x == 0) {
+                node_offset = blockIdx.y * blockDim.x + threadIdx.x;
+            if (node_offset >= T::max_nodes_size()) return;
+            const typename T::size_type i = batch_offset + node_offset;
+            if (blockIdx.y == 0 && threadIdx.x == 0) {
                 self.begin_offsets[blockIdx.x] = self.end_offsets[blockIdx.x] = batch_offset;
             }
             T::set_pos(self.nodes[i], T::erase_key);
             T::set_pos(self.nodes_buffer_[i], T::erase_key);
         }
-        // Blocks: BatchSize
-        // Threads: ObjsSize
+        // Blocks: T::grid_dim, NodesSize / T::block_dim
+        // Threads: T::block_dim
         template <typename T>
         __global__ void compute_indices(T self) {
-            const typename T::size_type i = T::batch_offset(blockIdx.x) + threadIdx.x;
+            const typename T::size_type batch_offset = T::batch_offset(blockIdx.x),
+                node_offset = blockIdx.y * blockDim.x + threadIdx.x;
+            if (node_offset >= T::max_nodes_size()) return;
+            const typename T::size_type i = batch_offset + node_offset;
             self.indices[i] = self.cell_id(self.get_pos(self.nodes[i]));
             self.indices_buffer_[i] = T::erase_index;
         }
         // Blocks: BatchSize
-        // Threads: keys per batch
+        // Threads: keys per batch (must be within 1024)
         template <typename T>
         __global__ void find_possible(T self, const vector2d* keys, const scalar_t* radii,
             const typename T::value_type** out, std::size_t max_per_key) {
             using size_type = T::size_type;
-            __shared__ cuda::std::array<size_t, T::max_objs_size()> indices;
+            __shared__ size_t indices[T::max_nodes_size()];
             const size_type begin_offset = T::batch_offset(blockIdx.x);
             const size_type end_offset = self.end_offsets[blockIdx.x];
             const size_type size = end_offset - begin_offset;
@@ -60,8 +64,7 @@ namespace snakeio::gpu {
                 const std::size_t out_offset = i * max_per_key;
                 std::size_t j = out_offset;
                 auto it = make_spatial_set_iterator<T>(self.nodes + begin_offset,
-                    indices.begin(), indices.begin() + size,
-                    bounding_rect<T>(keys[i], radii[i]));
+                    indices, indices + size, bounding_rect<T>(keys[i], radii[i]));
                 while (it != std::default_sentinel && j < out_offset + max_per_key) {
                     out[j++] = &*(it++);
                 }
@@ -73,7 +76,7 @@ namespace snakeio::gpu {
     // - It is guaranteed that setPos will not be used on active nodes.
     // - Semantic requirement: SetPos(node, key) => GetPos(node) == key.
     // - Must be device-capable.
-    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t ObjsSize, id_t BatchSize,
+    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t NodesSize, id_t BatchSize,
         typename Node = vector2d, auto GetPos = cuda::std::identity{}, auto SetPos = detail::default_setter<Node>>
     requires requires(Node& node, vector2d key) {
         requires std::is_trivial_v<Node>;
@@ -82,6 +85,8 @@ namespace snakeio::gpu {
     }
     class spatial_set_batch : public spatial_set_default_config<WorldWidth, WorldHeight, CellLength> {
         using config = spatial_set_default_config<WorldWidth, WorldHeight, CellLength>;
+        static constexpr unsigned block_dim = 256;
+        static constexpr dim3 grid_dim{BatchSize, (NodesSize - 1) / block_dim + 1};
     public:
         using typename config::size_type;
         using value_type = Node;
@@ -99,43 +104,43 @@ namespace snakeio::gpu {
         __host__ spatial_set_batch() {
             cudaMalloc(&begin_offsets, sizeof(size_type) * BatchSize);
             cudaMalloc(&end_offsets, sizeof(size_type) * BatchSize);
-            cudaMalloc(&indices, sizeof(size_type) * BatchSize * ObjsSize);
-            cudaMalloc(&indices_buffer_, sizeof(size_type) * BatchSize * ObjsSize);
-            cudaMalloc(&nodes, sizeof(Node) * BatchSize * ObjsSize);
-            cudaMalloc(&nodes_buffer_, sizeof(Node) * BatchSize * ObjsSize);
-            detail::init<<<BatchSize, ObjsSize>>>(*this);
+            cudaMalloc(&indices, sizeof(size_type) * BatchSize * NodesSize);
+            cudaMalloc(&indices_buffer_, sizeof(size_type) * BatchSize * NodesSize);
+            cudaMalloc(&nodes, sizeof(Node) * BatchSize * NodesSize);
+            cudaMalloc(&nodes_buffer_, sizeof(Node) * BatchSize * NodesSize);
+            detail::init<<<grid_dim, block_dim>>>(*this);
         }
-        /*__host__ ~spatial_set_batch() {
+        __host__ void destroy() {
             cudaFree(begin_offsets);
             cudaFree(end_offsets);
             cudaFree(indices);
             cudaFree(indices_buffer_);
             cudaFree(nodes);
             cudaFree(nodes_buffer_);
-        }*/
-        __host__ __device__ static constexpr size_type max_objs_size() noexcept { return ObjsSize; }
+        }
+        __host__ __device__ static constexpr size_type max_nodes_size() noexcept { return NodesSize; }
         __host__ __device__ static constexpr size_type batch_size() noexcept { return BatchSize; }
         __host__ __device__ static constexpr size_type batch_offset(size_type batch_idx) noexcept {
-            return batch_idx * ObjsSize;
+            return batch_idx * NodesSize;
         }
         __host__ void refresh() noexcept {
-            detail::compute_indices<<<BatchSize, ObjsSize>>>(*this);
+            detail::compute_indices<<<grid_dim, block_dim>>>(*this);
             void* d_temp_storage = nullptr;
             std::size_t d_temp_storage_bytes = 0;
             cub::DeviceSegmentedSort::SortPairs(d_temp_storage, d_temp_storage_bytes,
                 indices, indices_buffer_, nodes, nodes_buffer_,
-                BatchSize * ObjsSize, BatchSize,
+                BatchSize * NodesSize, BatchSize,
                 begin_offsets, end_offsets);
             cudaMalloc(&d_temp_storage, d_temp_storage_bytes);
             cub::DeviceSegmentedSort::SortPairs(d_temp_storage, d_temp_storage_bytes,
                 indices, indices_buffer_, nodes, nodes_buffer_,
-                BatchSize * ObjsSize, BatchSize,
+                BatchSize * NodesSize, BatchSize,
                 begin_offsets, end_offsets);
             cudaDeviceSynchronize();
             cudaFree(d_temp_storage);
-            size_type indices_[ObjsSize];
-            std::fill(indices_, indices_ + ObjsSize, 999);
-            cudaMemcpy(indices_, indices_buffer_, ObjsSize * sizeof(size_type), cudaMemcpyDeviceToHost);
+            size_type indices_[NodesSize];
+            std::fill(indices_, indices_ + NodesSize, 999);
+            cudaMemcpy(indices_, indices_buffer_, NodesSize * sizeof(size_type), cudaMemcpyDeviceToHost);
             std::swap(indices, indices_buffer_);
             std::swap(nodes, nodes_buffer_);
         }

@@ -1,7 +1,7 @@
 #include "game.hpp"
 #include "impl.hpp"
 #include "session.cuh"
-#include "spatial_set_.cuh"
+#include "spatial_set.cuh"
 #include <random>
 #include <cmath>
 #include <algorithm>
@@ -38,38 +38,36 @@ void gpu::init(game::impl& impl) noexcept {
 namespace {
     // blocks: 1
     // threads: players + 1
-    __global__ void add_session_basic(curand_state* states, session* sessions, id_t session_id,
+    __global__ void add_session_basic(curand_state* states, session_batch session_batch, id_t session_id,
         id_t human_players, id_t ai_players, tick_t max_tick) noexcept {
-        session& session = sessions[session_id];
-        const scalar_t width = game_width_psqp * sqrt(static_cast<scalar_t>(session.players));
-        const scalar_t height = game_height_psqp * sqrt(static_cast<scalar_t>(session.players));
+        auto& sessions = *session_batch.sessions;
+        const scalar_t width = game_width_psqp * sqrt(static_cast<scalar_t>(blockDim.x));
+        const scalar_t height = game_height_psqp * sqrt(static_cast<scalar_t>(blockDim.x));
         if (threadIdx.x == 0) {
-            session.players = human_players + ai_players;
-            session.human_players = human_players;
-            session.max_tick = max_tick;
-            session.width = width;
-            session.height = height;
-            session.sets.segment_size = snake_init_length * session.players;
-            session.sets.food_size = game_init_food_pp * session.players;
-        } else {
-            const auto idx = threadIdx.x - 1;
-            auto& snakes = session.snakes;
-            auto& sets = session.sets;
-            curand_state* snake_state = states + idx;
-            snakes.speed[idx] = snake_init_speed;
-            snakes.angle[idx] = curand_uniform(snake_state) * 2*M_PI;
-            snakes.frac_length[idx] = snake_init_length;
-            snakes.score[idx] = 0;
-            snakes.boost[idx] = 0;
-            snakes.status[idx] = snake_status_t::alive;
-            snakes.human[idx] = idx < human_players;
-            snakes.length[idx] = snake_init_length;
-            sets.segment_idx[idx] = {.player_id = idx, .segment_id = 0};
-            sets.segment_pos[idx] = {
-                curand_uniform(snake_state) * width,
-                curand_uniform(snake_state) * height,
-            };
+            sessions.players[session_id] = blockDim.x;
+            sessions.human_players[session_id] = human_players;
+            sessions.max_tick[session_id] = max_tick;
+            sessions.game_width[session_id] = width;
+            sessions.game_height[session_id] = height;
+            session_batch.segment_set.end_offsets[session_id] += snake_init_length * blockDim.x;
+            session_batch.food_set.end_offsets[session_id] = game_init_food_pp * blockDim.x;
         }
+        auto& snakes = session.snakes;
+        auto& sets = session.sets;
+        curand_state* snake_state = states + idx;
+        snakes.speed[idx] = snake_init_speed;
+        snakes.angle[idx] = curand_uniform(snake_state) * 2*M_PI;
+        snakes.frac_length[idx] = snake_init_length;
+        snakes.score[idx] = 0;
+        snakes.boost[idx] = 0;
+        snakes.status[idx] = snake_status_t::alive;
+        snakes.human[idx] = idx < human_players;
+        snakes.length[idx] = snake_init_length;
+        sets.segment_idx[idx] = {.player_id = idx, .segment_id = 0};
+        sets.segment_pos[idx] = {
+            curand_uniform(snake_state) * width,
+            curand_uniform(snake_state) * height,
+        };
     }
     // blocks: players
     // threads: snake_init_length

@@ -2,33 +2,54 @@
 #include <config.hpp>
 #include <snake_status.hpp>
 #include <vector.hpp>
-#include <cuda/std/array>
-#include <cuda/std/atomic>
+#include "spatial_set.cuh"
 
 namespace snakeio::gpu {
-    struct session {
-        id_t players, human_players;
-        cuda::atomic<tick_t> tick = -1; // -1: inactive
-        tick_t max_tick;
-        scalar_t width, height;
-        struct {
-            cuda::std::array<scalar_t, game_max_players> speed, angle, width, frac_length;
-            cuda::std::array<score_t, game_max_players> score;
-            cuda::std::array<boost_t, game_max_players> boost;
-            cuda::std::array<snake_status_t, game_max_players> status;
-            cuda::std::array<unsigned char, game_max_players> status_data;
-            cuda::std::array<bool, game_max_players> human;
-            cuda::std::array<size_t, game_max_players> length;
-        } snakes;
-        struct {
-            struct snake_segment_index {
-                id_t player_id;
-                size_t segment_id;
-            };
-            size_t segment_size, food_size;
-            cuda::std::array<snake_segment_index, game_max_players * snake_max_length> segment_idx;
-            cuda::std::array<vector2d, game_max_players * snake_max_length> segment_pos;
-            cuda::std::array<vector2d, game_max_food> food;
-        } sets;
+    struct session_batch {
+        struct sessions_type {
+            template <typename T>
+            using per_session_t = T[game_max_sessions];
+            template <typename T>
+            using per_snake_t = T[game_max_sessions][game_max_players];
+
+            per_session_t<id_t> players, human_players;
+            per_session_t<tick_t> tick, max_tick;
+            per_session_t<scalar_t> game_width, game_height;
+
+            per_snake_t<scalar_t> speed, angle, width, frac_length;
+            per_snake_t<score_t> score;
+            per_snake_t<boost_t> boost;
+            per_snake_t<snake_status_t> status;
+            per_snake_t<unsigned char> status_data;
+            per_snake_t<bool> human;
+            per_snake_t<size_t> length;
+        } *sessions;
+        struct snake_segment_index {
+            vector2d pos;
+            id_t player_id;
+            size_t segment_id;
+        };
+    private:
+        __device__ static vector2d segment_set_getter(const snake_segment_index& index) noexcept {
+            return index.pos;
+        }
+        __device__ static void segment_set_setter(snake_segment_index& index, vector2d key) noexcept {
+            index.pos = key;
+        }
+    public:
+        spatial_set_batch<game_max_width, game_max_height, snake_max_width * 2,
+            snake_max_length * game_max_players, game_max_sessions,
+            snake_segment_index, segment_set_getter, segment_set_setter> segment_set;
+        spatial_set_batch<game_max_width, game_max_height, snake_max_width + food_max_width,
+            game_max_food, game_max_sessions> food_set;
+
+        session_batch() {
+            cudaMalloc(&sessions, sizeof(sessions_type));
+        }
+        void destroy() {
+            cudaFree(sessions);
+            segment_set.destroy();
+            food_set.destroy();
+        }
     };
 }

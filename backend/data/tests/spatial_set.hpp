@@ -8,9 +8,9 @@ namespace snakeio::test::spatial_set {
     struct handle;
     struct index_array;
 
-    constexpr scalar_t world_width = 32, world_height = 32;
+    constexpr scalar_t world_width = 64, world_height = 64;
     constexpr scalar_t cell_length = 8;
-    constexpr size_t objs_size = 128;
+    constexpr size_t objs_size = 512;
 
     handle* init();
     index_array* make_index_array();

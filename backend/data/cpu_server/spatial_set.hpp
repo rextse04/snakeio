@@ -19,7 +19,7 @@ namespace snakeio::cpu {
     // - It is guaranteed that key's lifetime spans at least that of node.
     // - It is guaranteed that setPos will not be used on active nodes.
     // - Semantic requirement: SetPos(node, key) => GetPos(node) == key.
-    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t ObjsSize, typename Node = vector2d,
+    template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t NodesSize, typename Node = vector2d,
         auto GetPos = std::identity{}, auto SetPos = [](Node& node, const vector2d& key) { node = key; }>
     requires requires(Node& node, const vector2d& key) {
         requires std::default_initializable<Node>;
@@ -34,14 +34,14 @@ namespace snakeio::cpu {
         using typename config::difference_type;
         using typename config::key_type;
         using value_type = Node;
-        using index_array_type = std::array<size_type, ObjsSize + 1>;
+        using index_array_type = std::array<size_type, NodesSize + 1>;
         using iterator = std::span<value_type>::iterator;
         using const_iterator = std::span<const value_type>::iterator;
         using reverse_iterator = std::span<value_type>::reverse_iterator;
         using const_reverse_iterator = std::span<const value_type>::reverse_iterator;
     private:
         size_type size_ = 0;
-        std::array<value_type, ObjsSize + 1> nodes_;
+        std::array<value_type, NodesSize + 1> nodes_;
 #ifndef NDEBUG
         bool ready_ = true;
 #endif
@@ -91,7 +91,7 @@ namespace snakeio::cpu {
         }
         constexpr bool empty() const noexcept { return size() == 0; }
         constexpr size_type size() const noexcept { return size_; }
-        static constexpr size_type max_size() noexcept { return ObjsSize; }
+        static constexpr size_type max_size() noexcept { return NodesSize; }
         constexpr void clear() noexcept { size_ = 0; }
         // Erases n elements at the back.
         // UB if the elements are not erase_key.
