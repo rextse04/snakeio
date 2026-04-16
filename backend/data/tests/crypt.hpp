@@ -11,4 +11,6 @@ namespace snakeio::test::crypt {
         std::span<std::byte> text) noexcept;
     void poly1305_mac(tag_view out, std::span<const std::byte> text, const key_t& key) noexcept;
     key_t poly1305_key_gen(const key_t& key, const_nonce_view nonce) noexcept;
+    void encrypt_packet(std::span<std::byte> packet, const key_t& key) noexcept;
+    bool verify_decrypt_packet(std::span<std::byte> packet, const key_t& key) noexcept;
 }

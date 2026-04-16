@@ -20,7 +20,7 @@ namespace snakeio {
     using scalar_t = float;
     static_assert(std::numeric_limits<scalar_t>::has_quiet_NaN);
     using score_t = std::uint_least32_t;
-    using key_t = stdc::array<std::byte, 32>;
+    using key_t = std::array<std::byte, 32>;
     using tick_t = std::uint_least32_t;
     using boost_t = unsigned char;
     static_assert(std::numeric_limits<boost_t>::max() <= std::numeric_limits<tick_t>::max());

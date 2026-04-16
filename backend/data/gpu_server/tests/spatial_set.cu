@@ -4,6 +4,12 @@
 #include <vector>
 #include <cuda/std/algorithm>
 
+// GPU adapter for the shared backend/data/tests/spatial_set*.cpp suites.
+//
+// This file implements tests/spatial_set.hpp by forwarding insert/refresh/find
+// operations to gpu::spatial_set_batch and copying query/result buffers across
+// host/device for assertions in shared tests.
+
 namespace snakeio::test::spatial_set {
     using spatial_set = gpu::spatial_set_batch<world_width, world_height, cell_length, objs_size, 1>;
 

@@ -1,7 +1,6 @@
 #pragma once
 #include <config.hpp>
 #include <utils.hpp>
-#include <cpp_utils/type.hpp>
 #include <cstddef>
 #include <span>
 
@@ -25,9 +24,11 @@ namespace snakeio {
 
         using std::span<std::byte>::span;
         data_packet() = delete;
-        template <typename Self>
-        constexpr auto bytes(this Self&& self) noexcept {
-            return std::span<utils::follow_t<Self, std::byte>>(self);
+        constexpr std::span<std::byte> bytes() noexcept {
+            return *this;
+        }
+        constexpr std::span<const std::byte> bytes() const noexcept {
+            return {data(), size()};
         }
         constexpr id_t session_id() const noexcept {
             return load_32(subspan<0, 4>());
@@ -60,23 +61,35 @@ namespace snakeio {
         constexpr void chunk_id(std::uint_least16_t chunk_id) noexcept {
             (*this)[10] = static_cast<std::byte>(chunk_id);
         }
-        constexpr auto nonce_part(this auto&& self) noexcept {
-            return self.template subspan<12, 4>();
+        constexpr std::span<std::byte, 4> nonce_part() noexcept {
+            return bytes().template subspan<12, 4>();
         }
-        constexpr auto nonce(this auto&& self) noexcept {
-            return self.template subspan<4, nonce_view::extent>();
+        constexpr std::span<const std::byte, 4> nonce_part() const noexcept {
+            return bytes().template subspan<12, 4>();
         }
-        constexpr auto text(this auto&& self) noexcept {
-            return std::span(self.bytes().begin() + aad_size, self.bytes().end() - tag_view::extent);
+        constexpr nonce_view nonce() noexcept {
+            return bytes().template subspan<4, nonce_view::extent>();
         }
-        template <typename Self>
-        constexpr auto tag(this Self&& self) noexcept {
-            return std::span<utils::follow_t<Self, std::byte>, tag_view::extent>(
-                self.end() - tag_view::extent, tag_view::extent);
+        constexpr const_nonce_view nonce() const noexcept {
+            return bytes().template subspan<4, nonce_view::extent>();
+        }
+        constexpr std::span<std::byte> text() noexcept {
+            auto b = bytes();
+            return {b.data() + aad_size, b.size() - header_size};
+        }
+        constexpr std::span<const std::byte> text() const noexcept {
+            auto b = bytes();
+            return {b.data() + aad_size, b.size() - header_size};
+        }
+        constexpr tag_view tag() noexcept {
+            return bytes().template last<tag_view::extent>();
+        }
+        constexpr const_tag_view tag() const noexcept {
+            return bytes().template last<tag_view::extent>();
         }
 
         // Also copies fields to buffer and prepares the packet for sending. The text is encrypted in-place.
-        void encrypt(const key_t& key) noexcept;
+        __host__ __device__ void encrypt(const key_t& key) noexcept;
         enum class verify_result {
             ok,
             too_short,
@@ -85,9 +98,9 @@ namespace snakeio {
         };
         // Verifies packet size and tag.
         // Implementation is allowed to replace tag() with appropriate values to satisfy the packet format in RFC 8439.
-        [[nodiscard]] verify_result verify(const key_t& key) noexcept;
+        [[nodiscard]] __host__ __device__ verify_result verify(const key_t& key) noexcept;
         // Decrypts the text in-place and fill fields.
         // You must call verify() before calling this function, otherwise authenticity is not guaranteed.
-        void decrypt(const key_t& key) noexcept;
+        __host__ __device__ void decrypt(const key_t& key) noexcept;
     };
 }
