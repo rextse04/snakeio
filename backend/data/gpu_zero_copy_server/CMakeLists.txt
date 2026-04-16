@@ -1,0 +1,2 @@
+add_library(gpu_zero_copy_server_lib STATIC cuda.cu)
+target_link_libraries(gpu_zero_copy_server_lib PUBLIC gpu_server_lib)

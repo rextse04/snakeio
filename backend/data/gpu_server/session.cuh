@@ -3,6 +3,7 @@
 #include <snake_status.hpp>
 #include <vector.hpp>
 #include "spatial_set.cuh"
+#include <cuda_runtime.h>
 
 namespace snakeio::gpu {
     struct session_batch {
@@ -12,6 +13,7 @@ namespace snakeio::gpu {
             template <typename T>
             using per_snake_t = T[game_max_sessions][game_max_players];
 
+            per_session_t<bool> active;
             per_session_t<id_t> players, human_players;
             per_session_t<tick_t> tick, max_tick;
             per_session_t<scalar_t> game_width, game_height;
@@ -51,5 +53,12 @@ namespace snakeio::gpu {
             segment_set.destroy();
             food_set.destroy();
         }
+    };
+
+    struct add_session_req {
+        id_t human_players;
+        id_t ai_players;
+        tick_t max_tick;
+        key_t keys[game_max_players];
     };
 }

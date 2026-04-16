@@ -1,6 +1,6 @@
-#include "tests/game.hpp"
 #include "impl.hpp"
 #include "parse.hpp"
+#include "tick_core.hpp"
 #include <config.hpp>
 #include <logger.hpp>
 #include <game.hpp>
@@ -193,7 +193,7 @@ void game::tick(std::stop_token, int sock) noexcept {
             }
         } else {
             out_delta delta;
-            test::game::tick_core(tick, session, &impl_.game_loop_rng_, in_packets_buffer, delta);
+            tick_core(tick, session, &impl_.game_loop_rng_, in_packets_buffer, delta);
             delta_text_size = store_delta(delta_text, session, delta);
             if (std::ranges::any_of(in_packets, &in_packet_info::snapshot_requested)) {
                 snapshot_text_size = store_snapshot(snapshot_text, session);

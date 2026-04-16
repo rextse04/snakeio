@@ -1,4 +1,4 @@
-#include "tests/game.hpp"
+#include "tick_core.hpp"
 #include <config.hpp>
 #include <vector.hpp>
 #include "session.hpp"
@@ -25,7 +25,7 @@ namespace {
     };
 }
 
-void test::game::tick_core(tick_t tick, session& session, snakeio::game::random_engine* rng,
+void cpu::tick_core(tick_t tick, session& session, snakeio::game::random_engine* rng,
     std::span<in_packet_info> in_packets_buffer, out_delta& delta) noexcept {
     using enum snake_status_t;
     using snakeio::size_t;

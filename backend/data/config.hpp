@@ -3,8 +3,14 @@
 #include <limits>
 #include <cmath>
 #include <chrono>
-#include <array>
 #include <algorithm>
+
+#ifdef __CUDACC__
+#include <cuda/std/array>
+#else
+#include <array>
+#endif
+#include <compatibility.hpp>
 
 namespace snakeio {
     using namespace std::chrono_literals;
@@ -14,7 +20,7 @@ namespace snakeio {
     using scalar_t = float;
     static_assert(std::numeric_limits<scalar_t>::has_quiet_NaN);
     using score_t = std::uint_least32_t;
-    using key_t = std::array<std::byte, 32>;
+    using key_t = stdc::array<std::byte, 32>;
     using tick_t = std::uint_least32_t;
     using boost_t = unsigned char;
     static_assert(std::numeric_limits<boost_t>::max() <= std::numeric_limits<tick_t>::max());
@@ -56,6 +62,7 @@ namespace snakeio {
         delta_packet_max_text_size = align(24 * game_max_players + 4 + 12 * game_max_food + 4 + 8 * game_max_food),
         snapshot_packet_max_text_size = align(4 + 4 + 4 + game_max_players * (24 + 8 * snake_max_length) + 4 + 12 * game_max_food),
         lobby_status_max_text_size = align(game_max_players),
-        termination_max_text_size = align(24 * game_max_players);
+        termination_max_text_size = align(24 * game_max_players),
+        out_packet_max_text_size = std::max({delta_packet_max_text_size, snapshot_packet_max_text_size, lobby_status_max_text_size, termination_max_text_size});
     constexpr size_t packet_chunk_size = 1024;
 }

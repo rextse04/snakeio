@@ -1,5 +1,5 @@
 #include <tests/game.hpp>
-#include "game.hpp"
+#include "../tick_core.hpp"
 #include "../session.hpp"
 #include "../parse.hpp"
 #include <algorithm>
@@ -77,6 +77,6 @@ namespace snakeio::test::game {
             }, 0);
         }
         cpu::out_delta delta;
-        tick_core(0, session, nullptr, in_packets_buffer, delta);
+        cpu::tick_core(0, session, nullptr, in_packets_buffer, delta);
     }
 }

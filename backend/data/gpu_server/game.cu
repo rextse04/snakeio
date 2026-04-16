@@ -1,113 +1,146 @@
-#include "game.hpp"
-#include "impl.hpp"
-#include "session.cuh"
-#include "spatial_set.cuh"
-#include <random>
-#include <cmath>
+#include "impl.cuh"
+#include "cuda.cuh"
+#include "game_kernels.cuh"
+#include "tick_core.cuh"
+#include <game.hpp>
+#include <logger.hpp>
+#include <packet.hpp>
+#include <network.hpp>
+#include <utils.hpp>
 #include <algorithm>
-#include <cuda_runtime.h>
-#include <cuda/std/array>
-#include <curand_kernel.h>
+#include <cstring>
+#include <mutex>
+#include <ranges>
+#include <span>
 
 using namespace snakeio;
 using namespace snakeio::gpu;
 
-using curand_state = curandStatePhilox4_32_10;
-
-namespace {
-    // blocks: 1
-    // threads: curand_states_size
-    __global__ void init_curand(curand_state* states, std::random_device::result_type seed) {
-        curand_init(seed, threadIdx.x, 0, states + threadIdx.x);
-    }
+game::game() :
+    memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
+    new(memory_.get()) impl;
 }
 
-void gpu::init(game::impl& impl) noexcept {
-    impl.cuda_streams = new cudaStream_t[cuda_streams_size];
-    for (std::size_t i = 0; i < cuda_streams_size; ++i) {
-        cudaStreamCreate(static_cast<cudaStream_t*>(impl.cuda_streams) + i);
-    }
-    impl.cuda_events = new cudaEvent_t[cuda_events_size];
-    for (std::size_t i = 0; i < cuda_events_size; ++i) {
-        cudaEventCreate(static_cast<cudaEvent_t*>(impl.cuda_events) + i);
-    }
-    impl.curand_states = new curand_state[curand_states_size];
-    init_curand<<<1, curand_states_size>>>(static_cast<curand_state*>(impl.curand_states), std::random_device()());
+void game::add_session(id_t session_id,
+    id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
+    impl& impl_ = get_impl();
+    add_session_req req;
+    req.human_players = human_players;
+    req.ai_players = ai_players;
+    req.max_tick = max_tick;
+    std::ranges::copy(keys, req.keys);
+    cudaMemcpyAsync(impl_.d_add_req + session_id, &req, sizeof(req),
+        cudaMemcpyHostToDevice, impl_.cuda_streams[0]);
+    cudaStreamSynchronize(impl_.cuda_streams[0]);
+    sm_.activate(session_id);
 }
 
-namespace {
-    // blocks: 1
-    // threads: players + 1
-    __global__ void add_session_basic(curand_state* states, session_batch session_batch, id_t session_id,
-        id_t human_players, id_t ai_players, tick_t max_tick) noexcept {
-        auto& sessions = *session_batch.sessions;
-        const scalar_t width = game_width_psqp * sqrt(static_cast<scalar_t>(blockDim.x));
-        const scalar_t height = game_height_psqp * sqrt(static_cast<scalar_t>(blockDim.x));
-        if (threadIdx.x == 0) {
-            sessions.players[session_id] = blockDim.x;
-            sessions.human_players[session_id] = human_players;
-            sessions.max_tick[session_id] = max_tick;
-            sessions.game_width[session_id] = width;
-            sessions.game_height[session_id] = height;
-            session_batch.segment_set.end_offsets[session_id] += snake_init_length * blockDim.x;
-            session_batch.food_set.end_offsets[session_id] = game_init_food_pp * blockDim.x;
+void game::port(std::stop_token stop_token, int sock) noexcept {
+    impl& impl_ = get_impl();
+    std::byte buffer[in_packet_max_text_size + data_packet::header_size];
+    sockaddr_storage client_addr{};
+    while (true) {
+        if (stop_token.stop_requested()) [[unlikely]] {
+            logger::info("Data port received stop request, exiting.");
+            return;
         }
-        auto& snakes = session.snakes;
-        auto& sets = session.sets;
-        curand_state* snake_state = states + idx;
-        snakes.speed[idx] = snake_init_speed;
-        snakes.angle[idx] = curand_uniform(snake_state) * 2*M_PI;
-        snakes.frac_length[idx] = snake_init_length;
-        snakes.score[idx] = 0;
-        snakes.boost[idx] = 0;
-        snakes.status[idx] = snake_status_t::alive;
-        snakes.human[idx] = idx < human_players;
-        snakes.length[idx] = snake_init_length;
-        sets.segment_idx[idx] = {.player_id = idx, .segment_id = 0};
-        sets.segment_pos[idx] = {
-            curand_uniform(snake_state) * width,
-            curand_uniform(snake_state) * height,
-        };
-    }
-    // blocks: players
-    // threads: snake_init_length
-    __global__ void add_session_snake(session* sessions, id_t session_id) noexcept {
-        session& session = sessions[session_id];
-        const auto& snakes = session.snakes;
-        auto& sets = session.sets;
-        const snakeio::size_t idx = blockIdx.x * blockDim.x + threadIdx.x + session.players;
-        sets.segment_idx[idx] = {.player_id = blockIdx.x, .segment_id = threadIdx.x + 1};
-        vector2d& pos = sets.segment_pos[idx];
-        __sincosf(snakes.angle[blockIdx.x], &pos[1], &pos[0]);
-        pos = pos * snakes.speed[blockIdx.x] * (threadIdx.x + 1) + sets.segment_pos[blockIdx.x];
-    }
-    // blocks: 1
-    // threads: session.sets.food_size
-    __global__ void add_session_food(curand_state* states, session* sessions, id_t session_id) noexcept {
-        session& session = sessions[session_id];
-        session.sets.food[threadIdx.x] = {
-            curand_uniform(states) * session.width,
-            curand_uniform(states) * session.height,
-        };
+        socklen_t client_addr_len = sizeof(client_addr);
+        const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
+            reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
+        if (recv_len < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) [[unlikely]] {
+                logger::warn("recvfrom failed on data port: {}.", std::strerror(errno));
+            }
+            continue;
+        }
+
+        data_packet packet(buffer, recv_len);
+        if (recv_len <= data_packet::header_size) [[unlikely]] {
+            logger::debug("Received packet that is too short from {}.", client_addr);
+            logger::print_packet(logger::debug, packet.bytes());
+            continue;
+        }
+        const id_t session_id = packet.session_id(), player_id = packet.player_id();
+        if (session_id >= game_max_sessions || player_id >= game_max_players) [[unlikely]] {
+            logger::debug("Received packet with invalid session ID ({}) or player ID ({} from {}.",
+                session_id, player_id, client_addr);
+            continue;
+        }
+        impl_.addrs[session_id][player_id] = client_addr;
     }
 }
-// Streams: 0, 1
-// Events: 0
-void gpu::add_session(game::impl& impl,
-    id_t session_id, id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
-    const auto streams = static_cast<cudaStream_t*>(impl.cuda_streams) + 0;
-    const auto events = static_cast<cudaEvent_t*>(impl.cuda_events) + 0;
-    const auto states = static_cast<curand_state*>(impl.curand_states) + 0;
 
-    const id_t players = human_players + ai_players;
-    add_session_basic<<<1, players + 1, 0, streams[0]>>>(states, impl.sessions, session_id, human_players, ai_players, max_tick);
-    cudaEventRecord(events[0], streams[0]);
+void game::tick(std::stop_token, int sock) noexcept {
+    impl& impl_ = get_impl();
+    {
+        std::scoped_lock inbox_lock(impl_.inbox_mutex);
+        std::swap(impl_.inbox, impl_.inbox_back_);
+    }
+    cudaMemcpyAsync(impl_.device_inbox, impl_.inbox.data(), sizeof(impl::inbox_type),
+        cudaMemcpyHostToDevice, impl_.cuda_streams[0]);
 
-    cudaStreamWaitEvent(streams[0], events[0], 0);
-    add_session_snake<<<players, snake_init_length, 0, streams[0]>>>(impl.sessions, session_id);
-    add_session_food<<<1, game_init_food_pp * players, 0, streams[1]>>>(states, impl.sessions, session_id);
+    tick_core(impl_, impl_.global_tick);
+    cudaMemcpyAsync(&impl_.host_tick_result, impl_.device_tick_result, sizeof(session_tick_result),
+        cudaMemcpyDeviceToHost, impl_.cuda_streams[0]);
+    cudaStreamSynchronize(impl_.cuda_streams[0]);
 
-    std::ranges::copy(keys, impl.keys[session_id].begin());
-    cudaDeviceSynchronize();
+    for (id_t session_id = 0; session_id < game_max_sessions; ++session_id) {
+        if (!sm_[session_id]) continue;
+        const auto meta = impl_.host_meta[session_id];
+        if (!meta.active) continue;
+
+        launch_tick(impl_, session_id);
+        cudaMemcpyAsync(&impl_.host_tick_result, impl_.device_tick_result, sizeof(gpu::session_tick_result),
+            cudaMemcpyDeviceToHost, impl_.cuda_streams[0]);
+        cudaStreamSynchronize(impl_.cuda_streams[0]);
+
+        if (!impl_.host_tick_result.active) continue;
+
+        for (id_t player_id = 0; player_id < impl_.host_tick_result.human_players; ++player_id) {
+            if (impl_.host_tick_result.send_lobby && !impl_.host_tick_result.joined[player_id]) {
+                continue;
+            }
+
+            std::span<const std::byte> text;
+            if (impl_.host_tick_result.send_lobby) {
+                text = {impl_.host_tick_result.lobby_text, impl_.host_tick_result.lobby_size};
+            } else if (impl_.host_tick_result.terminate) {
+                text = {impl_.host_tick_result.termination_text, impl_.host_tick_result.termination_size};
+            } else if (impl_.host_tick_result.snapshot_requested[player_id]) {
+                text = {impl_.host_tick_result.snapshot_text, impl_.host_tick_result.snapshot_size};
+            } else {
+                text = {impl_.host_tick_result.delta_text, impl_.host_tick_result.delta_size};
+            }
+
+            const sockaddr_storage addr = impl_.inbox_back[global_id(session_id, player_id)].addr;
+            std::byte buffer[data_packet::header_size + packet_chunk_size]{};
+            data_packet packet(buffer);
+            packet.session_id(session_id);
+            packet.player_id(player_id);
+            packet.sender(data_packet::sender_t::server);
+            packet.chunk_id(0);
+            store_32(packet.nonce_part(), impl_.host_tick_result.tick);
+
+            const auto chunks = text | std::views::chunk(packet_chunk_size);
+            packet.total_chunks(chunks.size());
+            for (const auto& chunk : chunks) {
+                data_packet chunk_packet(buffer, chunk.size() + data_packet::header_size);
+                std::ranges::copy(chunk, chunk_packet.text().begin());
+                chunk_packet.encrypt(impl_.d_keys[session_id][player_id]);
+                sendto(sock, chunk_packet.bytes(), addr);
+                packet.chunk_id(packet.chunk_id() + 1);
+            }
+        }
+
+        const tick_t tick = std::atomic_ref(impl_.session_ticks[session_id]).load(std::memory_order::relaxed);
+        if (impl_.host_tick_result.terminate) {
+            impl_.host_meta[session_id].active = false;
+            sm_.deallocate(session_id);
+            continue;
+        }
+        if (!impl_.host_tick_result.send_lobby) {
+            std::atomic_ref(impl_.session_ticks[session_id]).store(tick + 1, std::memory_order::relaxed);
+        }
+    }
 }
 
