@@ -3,6 +3,7 @@
 #include <vector.hpp>
 #include <vector>
 #include <cuda/std/algorithm>
+#include <cmath>
 
 // GPU adapter for the shared backend/data/tests/spatial_set*.cpp suites.
 //
@@ -73,7 +74,7 @@ namespace snakeio::test::spatial_set {
         }
         vector2d* keys;
         cudaMalloc(&keys, sizeof(vector2d) * queries.size());
-        auto r = cudaMemcpy(keys, host_keys.data(), sizeof(vector2d) * queries.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(keys, host_keys.data(), sizeof(vector2d) * queries.size(), cudaMemcpyHostToDevice);
         scalar_t* radii;
         cudaMalloc(&radii, sizeof(scalar_t) * queries.size());
         cudaMemcpy(radii, host_radii.data(), sizeof(scalar_t) * queries.size(), cudaMemcpyHostToDevice);

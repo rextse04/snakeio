@@ -6,16 +6,9 @@
 #include <iterator>
 #include <type_traits>
 #include <concepts>
-
-#ifdef __CUDACC__
-#include <cuda/std/algorithm>
-#include <cuda/std/cmath>
-#include <cuda/std/functional>
-#else
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#endif
 #include <compatibility.hpp>
 
 namespace snakeio {
@@ -114,18 +107,11 @@ namespace snakeio {
             parent(current), end_(end),
             row_end_(row_end), column_begin_(column_begin), column_end_(column_end) {}
         __host__ __device__ constexpr void advance_to(size_type cell_id) noexcept {
-            constexpr auto proj = [](reference node) {
-                const vector2d& pos = GetPos(node);
-                return Config::cell_id(Config::row_id(pos), Config::column_id(pos));
-            };
-#ifdef __CUDACC__
             constexpr auto comp = [](reference node, size_type cell_id) {
-                return proj(node) < cell_id;
+                const vector2d& pos = GetPos(node);
+                return Config::cell_id(Config::row_id(pos), Config::column_id(pos)) < cell_id;
             };
-            parent::current_ = cuda::std::lower_bound(parent::current_, end_, cell_id, comp);
-#else
-            parent::current_ = std::ranges::lower_bound(parent::current_, end_, cell_id, {}, proj);
-#endif
+            parent::current_ = std::lower_bound(parent::current_, end_, cell_id, comp);
         }
         __host__ __device__ constexpr spatial_set_independent_iterator& operator++() noexcept {
             const vector2d& pos = GetPos(*++parent::current_);
@@ -162,7 +148,7 @@ namespace snakeio {
             parent(current), index_current_(index_current), index_end_(index_end),
             row_end_(row_end), column_begin_(column_begin), column_end_(column_end) {}
         __host__ __device__ constexpr void advance_to(size_type cell_id) noexcept {
-            const auto adv = stdc::lower_bound(index_current_, index_end_, cell_id) - index_current_;
+            const auto adv = std::lower_bound(index_current_, index_end_, cell_id) - index_current_;
             parent::current_ += adv;
             index_current_ += adv;
         }
@@ -189,12 +175,13 @@ namespace snakeio {
     struct spatial_set_rect {
         SizeT row_begin, row_end, column_begin, column_end;
     };
+    // Note: Incorrect values may be returned if key is not within the world defined by
     template <spatial_set_absolute_config Config>
     __host__ __device__ auto bounding_rect(const vector2d& key, scalar_t radius) noexcept
     -> spatial_set_rect<typename Config::size_type> {
         using size_type = Config::size_type;
         const size_type cell_radius =
-                static_cast<size_type>(radius / Config::cell_length) + (stdc::fmod(radius, Config::cell_length) > 0);
+            static_cast<size_type>(radius / Config::cell_length) + (std::fmod(radius, Config::cell_length) > 0);
         const size_type center_row = Config::row_id(key);
         const size_type center_column = Config::column_id(key);
         const size_type row_begin = (center_row > cell_radius) ? (center_row - cell_radius) : 0;
@@ -203,13 +190,13 @@ namespace snakeio {
         constexpr size_type rows = Config::rows;
         constexpr size_type columns = Config::columns;
         return {
-            row_begin, stdc::min<size_type>(rows, center_row + cell_radius + 1),
-            column_begin, stdc::min<size_type>(columns, center_column + cell_radius + 1)
+            row_begin, std::min<size_type>(rows, center_row + cell_radius + 1),
+            column_begin, std::min<size_type>(columns, center_column + cell_radius + 1)
         };
     }
 
     // Refer to the documentation of spatial_set_independent_iterator for preconditions.
-    template <spatial_set_relative_config Config, auto GetPos = stdc::identity{}, std::random_access_iterator BaseIter>
+    template <spatial_set_relative_config Config, auto GetPos = std::identity{}, std::random_access_iterator BaseIter>
     requires (position_getter_of<decltype(GetPos), typename std::iterator_traits<BaseIter>::reference>)
     __host__ __device__ constexpr auto make_spatial_set_iterator(BaseIter begin, BaseIter end,
         const spatial_set_rect<typename Config::size_type>& rect) noexcept {

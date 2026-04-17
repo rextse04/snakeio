@@ -1,12 +1,7 @@
-/* Include this file after all includes involving std or cuda::std. */
+/* Include this file after all includes involving std. */
 #pragma once
 
-namespace snakeio {
-#ifdef __CUDACC__
-    namespace stdc = cuda::std;
-#else
+#ifndef __CUDACC__
 #define __host__
 #define __device__
-    namespace stdc = std;
 #endif
-}

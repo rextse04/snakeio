@@ -45,7 +45,7 @@ namespace snakeio::gpu {
         __global__ void find_possible(T self, const vector2d* keys, const scalar_t* radii,
             const typename T::value_type** out, std::size_t max_per_key) {
             using size_type = T::size_type;
-            __shared__ size_t indices[T::max_nodes_size()];
+            __shared__ size_t indices[T::max_nodes_size() + 1];
             const size_type begin_offset = T::batch_offset(blockIdx.x);
             const size_type end_offset = self.end_offsets[blockIdx.x];
             const size_type size = end_offset - begin_offset;
@@ -53,11 +53,12 @@ namespace snakeio::gpu {
                 const size_type workload = size / blockDim.x + 1;
                 for (
                     size_type i = begin_offset + workload * threadIdx.x;
-                    i < begin_offset + workload * (threadIdx.x + 1) || i < end_offset;
+                    i < begin_offset + workload * (threadIdx.x + 1) && i < end_offset;
                     ++i) {
                     indices[i - begin_offset] = self.indices[i];
                 }
             }
+            if (threadIdx.x == 0) indices[size] = T::erase_index;
             __syncthreads();
             {
                 const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;

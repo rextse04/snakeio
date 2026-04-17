@@ -9,50 +9,27 @@ namespace snakeio::gpu {
     __host__ __device__ constexpr size_t client_index(id_t session_id, id_t player_id) noexcept {
         return static_cast<size_t>(session_id) * game_max_players + player_id;
     }
+    __host__ __device__ constexpr size_t snake_segment_index(id_t player_id, size_t seg_id) noexcept {
+        return static_cast<size_t>(player_id) * snake_max_length + seg_id;
+    }
 
     struct snake_status_info {
         snake_status_t status;
         unsigned char data;
     };
 
-    struct snake_state {
-        scalar_t speed;
-        scalar_t angle;
-        scalar_t width;
-        scalar_t frac_length;
-        score_t score;
-        boost_t boost;
-        snake_status_info status;
-        bool human;
-        std::array<vector2d, snake_max_length> segments;
-    };
-
-    struct food_state {
-        vector2d pos;
-        scalar_t width;
-    };
-
-    struct in_packet_state {
-        bool snapshot_requested;
-        bool boost;
-        scalar_t angle;
-    };
-
-    struct in_packet_info_state : in_packet_state {
-        tick_t tick;
-    };
 
     struct client_state {
         key_t key;
-        tick_t tick;
-        in_packet_state last_packet;
     };
 
     struct out_delta_state {
         size_t foods_added_size;
         size_t foods_removed_size;
-        std::array<food_state, game_max_food> foods_added;
-        std::array<vector2d, game_max_food> foods_removed;
+        std::array<vector2d, game_max_food> foods_added_poss;
+        std::array<scalar_t, game_max_food> foods_added_widths;
+        std::array<scalar_t, game_max_food> foods_removed_xs;
+        std::array<scalar_t, game_max_food> foods_removed_ys;
     };
 
     struct session_state {
@@ -63,11 +40,23 @@ namespace snakeio::gpu {
         tick_t max_tick;
         scalar_t width;
         scalar_t height;
-        std::array<snake_state, game_max_players> snakes;
-        std::array<food_state, game_max_food> foods;
+        std::array<scalar_t, game_max_players> snake_speeds;
+        std::array<scalar_t, game_max_players> snake_angles;
+        std::array<scalar_t, game_max_players> snake_widths;
+        std::array<scalar_t, game_max_players> snake_frac_lengths;
+        std::array<score_t, game_max_players> snake_scores;
+        std::array<boost_t, game_max_players> snake_boosts;
+        std::array<snake_status_info, game_max_players> snake_statuses;
+        std::array<bool, game_max_players> snake_humans;
+        std::array<vector2d, game_max_players * snake_max_length> snake_segments;
+        std::array<vector2d, game_max_food> food_poss;
+        std::array<scalar_t, game_max_food> food_widths;
         size_t food_size;
         out_delta_state delta;
-        std::array<in_packet_info_state, game_max_players> in_packets;
+        std::array<tick_t, game_max_players> in_packet_ticks;
+        std::array<bool, game_max_players> in_packet_snapshot_requested;
+        std::array<bool, game_max_players> in_packet_boost;
+        std::array<scalar_t, game_max_players> in_packet_angle;
         // Scratch used across phase kernels.
         std::array<unsigned char, game_max_players> kill_flags;
         std::array<snake_status_info, game_max_players> kill_reasons;
@@ -91,6 +80,10 @@ namespace snakeio::gpu {
     struct device_state {
         session_state* sessions;
         client_state* clients;
+        tick_t* client_ticks;
+        bool* client_last_snapshot_requested;
+        bool* client_last_boost;
+        scalar_t* client_last_angle;
         std::byte* packet_ring;
         size_t packet_ring_capacity;
         unsigned* packet_ring_head;

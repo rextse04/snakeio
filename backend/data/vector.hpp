@@ -1,19 +1,13 @@
 #pragma once
 #include <config.hpp>
 #include <cstddef>
-
-#ifdef __CUDACC__
-#include <cuda/std/array>
-#include <cuda/std/numeric>
-#else
 #include <array>
 #include <numeric>
-#endif
 #include <compatibility.hpp>
 
 namespace snakeio {
     template <std::size_t Dim>
-    struct vector : stdc::array<scalar_t, Dim> {
+    struct vector : std::array<scalar_t, Dim> {
         constexpr bool operator==(const vector& other) const noexcept = default;
         constexpr auto operator<=>(const vector& other) const noexcept = delete;
         __host__ __device__ constexpr vector operator+(const vector& other) const noexcept {
@@ -70,7 +64,7 @@ namespace snakeio {
         }
         // inner product
         __host__ __device__ constexpr scalar_t operator*(const vector& other) const noexcept {
-            return stdc::transform_reduce(this->begin(), this->end(), other.begin(), 0);
+            return std::transform_reduce(this->begin(), this->end(), other.begin(), 0);
         }
         __host__ __device__ constexpr scalar_t norm_sq() const noexcept {
             return *this * *this;
