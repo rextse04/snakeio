@@ -1,5 +1,6 @@
 #include "game_kernels.cuh"
 #include <crypt/core.hpp>
+#include <utils.hpp>
 #include <cuda_runtime.h>
 #include <array>
 #include <cmath>
@@ -16,49 +17,7 @@ constexpr sio::size_t kPacketAadSize = 16;
 constexpr sio::size_t kPacketHeaderSize = 32;
 constexpr sio::size_t kIngressPacketCapacity = sio::in_packet_max_text_size + kPacketHeaderSize;
 using sio::gpu::client_index;
-
-__host__ __device__ constexpr std::uint_least32_t load32(const std::byte* p) noexcept {
-    return (static_cast<std::uint_least32_t>(p[0]) << 0) |
-           (static_cast<std::uint_least32_t>(p[1]) << 8) |
-           (static_cast<std::uint_least32_t>(p[2]) << 16) |
-           (static_cast<std::uint_least32_t>(p[3]) << 24);
-}
-__host__ __device__ constexpr void store32(std::byte* p, std::uint_least32_t v) noexcept {
-    p[0] = static_cast<std::byte>(v >> 0);
-    p[1] = static_cast<std::byte>(v >> 8);
-    p[2] = static_cast<std::byte>(v >> 16);
-    p[3] = static_cast<std::byte>(v >> 24);
-}
-__host__ __device__ constexpr std::uint_least64_t load64(const std::byte* p) noexcept {
-    return (static_cast<std::uint_least64_t>(p[0]) << 0) |
-           (static_cast<std::uint_least64_t>(p[1]) << 8) |
-           (static_cast<std::uint_least64_t>(p[2]) << 16) |
-           (static_cast<std::uint_least64_t>(p[3]) << 24) |
-           (static_cast<std::uint_least64_t>(p[4]) << 32) |
-           (static_cast<std::uint_least64_t>(p[5]) << 40) |
-           (static_cast<std::uint_least64_t>(p[6]) << 48) |
-           (static_cast<std::uint_least64_t>(p[7]) << 56);
-}
-__host__ __device__ constexpr void store64(std::byte* p, std::uint_least64_t v) noexcept {
-    p[0] = static_cast<std::byte>(v >> 0);
-    p[1] = static_cast<std::byte>(v >> 8);
-    p[2] = static_cast<std::byte>(v >> 16);
-    p[3] = static_cast<std::byte>(v >> 24);
-    p[4] = static_cast<std::byte>(v >> 32);
-    p[5] = static_cast<std::byte>(v >> 40);
-    p[6] = static_cast<std::byte>(v >> 48);
-    p[7] = static_cast<std::byte>(v >> 56);
-}
-__host__ __device__ inline float loadf32(const std::byte* p) noexcept {
-    union { std::uint_least32_t u; float f; } u{};
-    u.u = load32(p);
-    return u.f;
-}
-__host__ __device__ inline void storef32(std::byte* p, float f) noexcept {
-    union { std::uint_least32_t u; float f; } u{};
-    u.f = f;
-    store32(p, u.u);
-}
+    
 __host__ __device__ constexpr sio::size_t align16(sio::size_t n) noexcept {
     return sio::align(n);
 }
@@ -100,8 +59,8 @@ __device__ bool verify_and_decrypt(const sio::key_t& key, std::byte* packet, sio
     const sio::key_t otk = sio::crypt::poly1305_key_gen(key, nonce);
     std::byte expected[16];
     for (int i = 0; i < 16; ++i) expected[i] = packet[bytes_size - 16 + i];
-    store64(packet + bytes_size - 16, kPacketAadSize);
-    store64(packet + bytes_size - 8, bytes_size - kPacketHeaderSize);
+    sio::store_64(cuda::std::span<std::byte, 8>(packet + bytes_size - 16, 8), kPacketAadSize);
+    sio::store_64(cuda::std::span<std::byte, 8>(packet + bytes_size - 8, 8), bytes_size - kPacketHeaderSize);
     std::byte computed[16];
     sio::crypt::poly1305_mac(std::span<std::byte, 16>{computed, 16}, std::span<const std::byte>{packet, bytes_size}, otk);
     if (!safe_tag_equal(computed, expected)) return false;
@@ -115,8 +74,8 @@ __device__ void encrypt_packet(const sio::key_t& key, std::byte* packet, sio::si
     const sio::key_t otk = sio::crypt::poly1305_key_gen(key, nonce);
     sio::crypt::chacha20_encrypt(key, 1, nonce,
         std::span<std::byte>{packet + kPacketAadSize, bytes_size - kPacketHeaderSize});
-    store64(packet + bytes_size - 16, kPacketAadSize);
-    store64(packet + bytes_size - 8, bytes_size - kPacketHeaderSize);
+    sio::store_64(cuda::std::span<std::byte, 8>(packet + bytes_size - 16, 8), kPacketAadSize);
+    sio::store_64(cuda::std::span<std::byte, 8>(packet + bytes_size - 8, 8), bytes_size - kPacketHeaderSize);
     sio::crypt::poly1305_mac(
         std::span<std::byte, 16>{packet + bytes_size - 16, 16}, std::span<const std::byte>{packet, bytes_size}, otk);
 }
@@ -207,8 +166,8 @@ __global__ void k_ingest(sio::gpu::device_state st) {
     std::byte* p = st.ingress_packet;
     const sio::size_t n = *st.ingress_packet_size;
     if (n <= kPacketHeaderSize) return;
-    const sio::id_t sid = load32(p + 0);
-    const sio::id_t pid = load32(p + 4);
+    const sio::id_t sid = sio::load_32(cuda::std::span<const std::byte, 4>(p + 0, 4));
+    const sio::id_t pid = sio::load_32(cuda::std::span<const std::byte, 4>(p + 4, 4));
     if (sid >= sio::game_max_sessions) return;
     auto& s = st.sessions[sid];
     if (!s.active || pid >= s.players) return;
@@ -218,7 +177,8 @@ __global__ void k_ingest(sio::gpu::device_state st) {
     const std::byte* text = p + kPacketAadSize;
     c.last_packet.snapshot_requested = static_cast<bool>(text[0]);
     c.last_packet.boost = static_cast<bool>(text[1]);
-    c.last_packet.angle = loadf32(text + 4);
+    c.last_packet.angle = cuda::std::bit_cast<float>(
+        sio::load_32(cuda::std::span<const std::byte, 4>(text + 4, 4)));
     c.tick = s.tick;
     *st.ingress_ok = true;
     *st.ingress_session_id = sid;
@@ -360,11 +320,11 @@ __global__ void k_collide_food(sio::gpu::device_state st, sio::id_t sid) {
 }
 
 __device__ sio::size_t store_snake_basic(std::byte* out, const sio::gpu::snake_state& sn) {
-    storef32(out + 0, sn.speed);
-    storef32(out + 4, sn.angle);
-    storef32(out + 8, sn.width);
-    store32(out + 12, static_cast<std::uint_least32_t>(snake_len(sn)));
-    store32(out + 16, sn.score);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 0, 4), cuda::std::bit_cast<std::uint_least32_t>(sn.speed));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(sn.angle));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 8, 4), cuda::std::bit_cast<std::uint_least32_t>(sn.width));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 12, 4), static_cast<std::uint_least32_t>(snake_len(sn)));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 16, 4), sn.score);
     out[20] = static_cast<std::byte>(sn.boost);
     out[21] = static_cast<std::byte>(sn.status.status);
     out[22] = static_cast<std::byte>(sn.status.data);
@@ -377,21 +337,21 @@ __global__ void k_serialize_delta(sio::gpu::device_state st, sio::id_t sid) {
     auto& s = st.sessions[sid];
     std::byte* out = st.plain_delta;
     sio::size_t it = 0;
-    store32(out + it, 0); it += 4;
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), 0); it += 4;
     for (sio::id_t i = 0; i < s.players; ++i) {
         it += store_snake_basic(out + it, s.snakes[i]);
     }
-    store32(out + it, s.delta.foods_added_size); it += 4;
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), s.delta.foods_added_size); it += 4;
     for (sio::size_t i = 0; i < s.delta.foods_added_size; ++i) {
-        storef32(out + it + 0, s.delta.foods_added[i].pos[0]);
-        storef32(out + it + 4, s.delta.foods_added[i].pos[1]);
-        storef32(out + it + 8, s.delta.foods_added[i].width);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 0, 4), cuda::std::bit_cast<std::uint_least32_t>(s.delta.foods_added[i].pos[0]));
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(s.delta.foods_added[i].pos[1]));
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 8, 4), cuda::std::bit_cast<std::uint_least32_t>(s.delta.foods_added[i].width));
         it += 12;
     }
-    store32(out + it, s.delta.foods_removed_size); it += 4;
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), s.delta.foods_removed_size); it += 4;
     for (sio::size_t i = 0; i < s.delta.foods_removed_size; ++i) {
-        storef32(out + it + 0, s.delta.foods_removed[i][0]);
-        storef32(out + it + 4, s.delta.foods_removed[i][1]);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 0, 4), cuda::std::bit_cast<std::uint_least32_t>(s.delta.foods_removed[i][0]));
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(s.delta.foods_removed[i][1]));
         it += 8;
     }
     *st.plain_delta_size = align16(it);
@@ -403,25 +363,25 @@ __global__ void k_serialize_snapshot(sio::gpu::device_state st, sio::id_t sid) {
     auto& s = st.sessions[sid];
     std::byte* out = st.plain_snapshot;
     sio::size_t it = 0;
-    store32(out + 0, 1);
-    storef32(out + 4, s.width);
-    storef32(out + 8, s.height);
-    store32(out + 12, s.max_tick);
-    store32(out + 16, s.players);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 0, 4), 1);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(s.width));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 8, 4), cuda::std::bit_cast<std::uint_least32_t>(s.height));
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 12, 4), s.max_tick);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + 16, 4), s.players);
     it = 20;
     for (sio::id_t i = 0; i < s.players; ++i) {
         it += store_snake_basic(out + it, s.snakes[i]);
         for (sio::size_t seg = 0; seg < snake_len(s.snakes[i]); ++seg) {
-            storef32(out + it + 0, s.snakes[i].segments[seg][0]);
-            storef32(out + it + 4, s.snakes[i].segments[seg][1]);
+            sio::store_32(cuda::std::span<std::byte, 4>(out + it + 0, 4), cuda::std::bit_cast<std::uint_least32_t>(s.snakes[i].segments[seg][0]));
+            sio::store_32(cuda::std::span<std::byte, 4>(out + it + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(s.snakes[i].segments[seg][1]));
             it += 8;
         }
     }
-    store32(out + it, s.food_size); it += 4;
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), s.food_size); it += 4;
     for (sio::size_t i = 0; i < s.food_size; ++i) {
-        storef32(out + it + 0, s.foods[i].pos[0]);
-        storef32(out + it + 4, s.foods[i].pos[1]);
-        storef32(out + it + 8, s.foods[i].width);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 0, 4), cuda::std::bit_cast<std::uint_least32_t>(s.foods[i].pos[0]));
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 4, 4), cuda::std::bit_cast<std::uint_least32_t>(s.foods[i].pos[1]));
+        sio::store_32(cuda::std::span<std::byte, 4>(out + it + 8, 4), cuda::std::bit_cast<std::uint_least32_t>(s.foods[i].width));
         it += 12;
     }
     *st.plain_snapshot_size = align16(it);
@@ -433,7 +393,7 @@ __global__ void k_serialize_lobby(sio::gpu::device_state st, sio::id_t sid) {
     auto& s = st.sessions[sid];
     std::byte* out = st.plain_lobby;
     sio::size_t it = 0;
-    store32(out + it, 2); it += 4;
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), 2); it += 4;
     for (sio::id_t i = 0; i < s.human_players; ++i) {
         out[it++] = static_cast<std::byte>(s.in_packets[i].tick == 0);
     }
@@ -446,8 +406,8 @@ __global__ void k_serialize_termination(sio::gpu::device_state st, sio::id_t sid
     auto& s = st.sessions[sid];
     std::byte* out = st.plain_termination;
     sio::size_t it = 0;
-    store32(out + it, 3);
-    store32(out + it + 4, s.max_tick);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it, 4), 3);
+    sio::store_32(cuda::std::span<std::byte, 4>(out + it + 4, 4), s.max_tick);
     it += 8;
     for (sio::id_t i = 0; i < s.players; ++i) {
         it += store_snake_basic(out + it, s.snakes[i]);
@@ -479,13 +439,13 @@ __global__ void k_emit(sio::gpu::device_state st, sio::id_t sid,
         if (ring_off + packet_size > st.packet_ring_capacity) continue;
 
         std::byte* out = st.packet_ring + ring_off;
-        store32(out + 0, sid);
-        store32(out + 4, pid);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + 0, 4), sid);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + 4, 4), pid);
         out[8] = static_cast<std::byte>(1);
         out[9] = static_cast<std::byte>(chunks);
         out[10] = static_cast<std::byte>(c);
         out[11] = std::byte(0);
-        store32(out + 12, s.tick);
+        sio::store_32(cuda::std::span<std::byte, 4>(out + 12, 4), s.tick);
         for (sio::size_t i = 0; i < text_size; ++i) out[kPacketAadSize + i] = payload[payload_off + i];
         encrypt_packet(st.clients[client_index(sid, pid)].key, out, packet_size);
 

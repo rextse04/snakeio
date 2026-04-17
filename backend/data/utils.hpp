@@ -67,12 +67,10 @@ namespace snakeio {
         using enum std::endian;
         if constexpr (sizeof(float) == 4) {
             if constexpr (native == little) {
-                stdc::array<std::byte, 4> bytes_;
-                stdc::copy(bytes.begin(), bytes.end(), bytes_.begin());
+                stdc::array<std::byte, 4> bytes_ = {bytes[0], bytes[1], bytes[2], bytes[3]};
                 return std::bit_cast<float>(bytes_);
             } else if constexpr (native == big) {
-                stdc::array<std::byte, 4> bytes_;
-                stdc::reverse_copy(bytes.begin(), bytes.end(), bytes_.begin());
+                stdc::array<std::byte, 4> bytes_ = {bytes[3], bytes[2], bytes[1], bytes[0]};
                 return stdc::bit_cast<float>(bytes_);
             }
         }
@@ -83,9 +81,15 @@ namespace snakeio {
         static_assert(native == little || native == big);
         auto bytes = stdc::bit_cast<stdc::array<std::byte, 4>>(value);
         if constexpr (native == little) {
-            stdc::copy(bytes.begin(), bytes.end(), out.begin());
+            out[0] = bytes[0];
+            out[1] = bytes[1];
+            out[2] = bytes[2];
+            out[3] = bytes[3];
         } else if constexpr (native == big) {
-            stdc::reverse_copy(bytes.begin(), bytes.end(), out.begin());
+            out[0] = bytes[3];
+            out[1] = bytes[2];
+            out[2] = bytes[1];
+            out[3] = bytes[0];
         }
     }
 

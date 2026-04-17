@@ -8,8 +8,8 @@ add_library(gpu_server_game_test_lib STATIC tests/game.cpp)
 target_link_libraries(gpu_server_game_test_lib PRIVATE gpu_server_lib)
 register_test(game)
 
-add_executable(gpu_server_packet_io_test tests/packet_io.cpp)
-target_link_libraries(gpu_server_packet_io_test PRIVATE
+add_library(gpu_server_packet_io_gpu_test_lib INTERFACE)
+target_link_libraries(gpu_server_packet_io_gpu_test_lib INTERFACE
     gpu_server_lib
-    crypt_crypt_cpu_test_lib
-    Boost::unit_test_framework)
+    crypt_packet_host_lib)
+register_test(packet_io gpu)

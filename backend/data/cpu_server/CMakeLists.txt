@@ -14,3 +14,8 @@ register_test(spatial_set dependent)
 add_library(cpu_server_game_test_lib STATIC tests/game.cpp)
 target_link_libraries(cpu_server_game_test_lib PUBLIC cpu_server_tick_core_lib)
 register_test(game)
+
+add_library(cpu_server_packet_io_cpu_test_lib INTERFACE)
+target_link_libraries(cpu_server_packet_io_cpu_test_lib INTERFACE
+        cpu_server_lib)
+register_test(packet_io cpu)

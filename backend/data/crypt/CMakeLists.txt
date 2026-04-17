@@ -1,6 +1,7 @@
 add_library(crypt_lib STATIC core.cpp packet.cpp)
 if (CMAKE_CUDA_COMPILER)
 	add_library(crypt_gpu_lib STATIC core.cu)
+	# Keep host symbols enabled: host packet test wrappers call into this target in CUDA builds.
 	add_library(crypt_packet_host_lib STATIC packet.cpp)
 	target_link_libraries(crypt_packet_host_lib PUBLIC crypt_gpu_lib)
 else()
