@@ -37,6 +37,7 @@ namespace snakeio {
 #endif
         // Allocate memory_ and initializes the impl in it.
         game();
+        ~game() noexcept;
         constexpr const auto& session_manager() const noexcept { return sm_; }
         enum class add_session_error : unsigned char {
             no_memory = 1,

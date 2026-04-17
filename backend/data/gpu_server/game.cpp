@@ -14,16 +14,27 @@ namespace {
     constexpr snakeio::size_t clients_size = game_max_sessions * game_max_players;
 }
 
+
 struct game::impl {
     gpu::device_state gpu_state{};
-    std::array<std::array<sockaddr_storage, game_max_players>, game_max_sessions> addrs{};
+    sockaddr_storage* addrs{};
     std::mutex mutex;
 };
 
 game::game() :
     memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
     new(memory_.get()) impl;
-    gpu::init_device_state(get_impl().gpu_state);
+    auto& impl_ = get_impl();
+    gpu::init_device_state(impl_.gpu_state);
+    gpu::init_client_addrs_gpu(impl_.gpu_state, sizeof(sockaddr_storage) * clients_size);
+    impl_.addrs = reinterpret_cast<sockaddr_storage*>(impl_.gpu_state.client_addrs);
+}
+
+game::~game() noexcept {
+    impl& impl_ = get_impl();
+    gpu::destroy_client_addrs_gpu(impl_.gpu_state);
+    gpu::destroy_device_state(impl_.gpu_state);
+    impl_.~impl();
 }
 
 void game::add_session(id_t session_id,
@@ -59,7 +70,7 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
             if (*impl_.gpu_state.ingress_ok) {
                 const id_t session_id = *impl_.gpu_state.ingress_session_id;
                 const id_t player_id = *impl_.gpu_state.ingress_player_id;
-                impl_.addrs[session_id][player_id] = client_addr;
+                impl_.addrs[gpu::client_index(session_id, player_id)] = client_addr;
             }
         }
     }
@@ -68,24 +79,18 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
 void game::tick(std::stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
     std::scoped_lock lock(impl_.mutex);
+    gpu::tick_active_sessions_gpu(impl_.gpu_state);
+
+    const unsigned send_count = *impl_.gpu_state.send_descs_size;
+    for (unsigned j = 0; j < send_count; ++j) {
+        const gpu::send_desc& desc = impl_.gpu_state.send_descs[j];
+        std::span<std::byte> bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
+        sendto(sock, bytes, impl_.addrs[gpu::client_index(desc.session_id, desc.player_id)]);
+    }
+
     for (id_t i = 0; i < game_max_sessions; ++i) {
         if (!sm_[i]) continue;
-        gpu::tick_session_gpu(impl_.gpu_state, i);
-        const gpu::tick_report& report = *impl_.gpu_state.report;
-        if (!report.active || !report.has_payload) {
-            if (report.ended) {
-                sm_.deallocate(i);
-                logger::debug("Session {} ended", i);
-            }
-            continue;
-        }
-        const unsigned send_count = report.send_count;
-        for (unsigned j = 0; j < send_count; ++j) {
-            const gpu::send_desc& desc = impl_.gpu_state.send_descs[j];
-            std::span<std::byte> bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
-            sendto(sock, bytes, impl_.addrs[desc.session_id][desc.player_id]);
-        }
-        if (report.ended) {
+        if (!impl_.gpu_state.sessions[i].active) {
             sm_.deallocate(i);
             logger::debug("Session {} ended", i);
         }

@@ -88,7 +88,7 @@ namespace snakeio::test::game {
             }
             out.snakes.push_back(std::move(dst));
         }
-        for (snakeio::size_t i = 0; i < s.food_size; ++i) {
+        for (size_t i = 0; i < s.food_size; ++i) {
             out.foods.push_back({s.food_poss[i], s.food_widths[i]});
         }
         return out;
@@ -105,6 +105,6 @@ namespace snakeio::test::game {
             h->state.client_last_boost[cidx] = inputs[i].boost;
             h->state.client_last_angle[cidx] = inputs[i].angle;
         }
-        gpu::tick_session_gpu(h->state, h->session_id);
+        gpu::tick_active_sessions_gpu(h->state);
     }
 }

@@ -4,6 +4,7 @@
 #include <vector.hpp>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace snakeio::gpu {
     __host__ __device__ constexpr size_t client_index(id_t session_id, id_t player_id) noexcept {
@@ -70,13 +71,6 @@ namespace snakeio::gpu {
         size_t bytes_size;
     };
 
-    struct tick_report {
-        bool active;
-        bool ended;
-        bool has_payload;
-        unsigned send_count;
-    };
-
     struct device_state {
         session_state* sessions;
         client_state* clients;
@@ -90,21 +84,41 @@ namespace snakeio::gpu {
         send_desc* send_descs;
         unsigned* send_descs_size;
         unsigned send_descs_capacity;
-        std::byte* plain_delta;
-        std::byte* plain_snapshot;
-        std::byte* plain_lobby;
-        std::byte* plain_termination;
-        size_t* plain_delta_size;
-        size_t* plain_snapshot_size;
-        size_t* plain_lobby_size;
-        size_t* plain_termination_size;
-        tick_report* report;
         bool* ingress_ok;
         id_t* ingress_session_id;
         id_t* ingress_player_id;
         std::byte* ingress_packet;
         size_t* ingress_packet_size;
         size_t ingress_packet_capacity;
+        std::byte* client_addrs;
+        std::uint_least64_t rng_seed;
+        std::uint_least64_t rng_offset;
+        void* rng_states;
+        size_t rng_states_size;
+
+        // Owned runtime resources previously kept as file-scope globals in game.cu.
+        void* snake_spatial_set;
+        void* food_spatial_set;
+        std::byte* plain_delta_all;
+        size_t* plain_delta_sizes_all;
+        std::byte* plain_lobby_all;
+        size_t* plain_lobby_sizes_all;
+        std::byte* plain_snapshot_all;
+        size_t* plain_snapshot_sizes_all;
+        std::byte* plain_termination_all;
+        size_t* plain_termination_sizes_all;
+        key_t* add_session_keys;
+
+        // Reused per-tick masks for batched multi-session orchestration.
+        bool* tick_masks;
+        bool* tick_active_mask;
+        bool* tick_gt0_mask;
+        bool* tick_lobby_emit_mask;
+        bool* tick_tick0_snapshot_emit_mask;
+        bool* tick_delta_emit_mask;
+        bool* tick_term_emit_mask;
+        bool* tick_inc_mask;
+        unsigned* tick_flags;
     };
 
     void init_device_state(device_state& state) noexcept;
@@ -116,5 +130,8 @@ namespace snakeio::gpu {
 
     void ingest_packet_gpu(device_state& state, const std::byte* packet, size_t bytes_size) noexcept;
 
-    void tick_session_gpu(device_state& state, id_t session_id) noexcept;
+    void init_client_addrs_gpu(device_state& state, size_t bytes_size) noexcept;
+    void destroy_client_addrs_gpu(device_state& state) noexcept;
+
+    void tick_active_sessions_gpu(device_state& state) noexcept;
 }
