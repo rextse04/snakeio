@@ -1,9 +1,15 @@
 cmake_minimum_required(VERSION 4.2)
+set(CMAKE_C_COMPILER gcc-14)
+set(CMAKE_CXX_COMPILER g++-14)
+set(CMAKE_CUDA_HOST_COMPILER g++-14)
 project(snakeio)
+
+option(SNAKEIO_ENABLE_DOCA_GPUNETIO "Build DOCA GPUNetIO server scaffolding" OFF)
 
 include(CheckLanguage)
 
 set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CUDA_HOST_COMPILER g++-14)
 check_language(CUDA)
 if (CMAKE_CUDA_COMPILER)
     enable_language(CUDA)
@@ -30,4 +36,7 @@ endfunction()
 add_server(cpu_server)
 if (CMAKE_CUDA_COMPILER)
     add_server(gpu_server)
+    if (SNAKEIO_ENABLE_DOCA_GPUNETIO)
+        add_server(doca_gpunetio_server)
+    endif()
 endif()

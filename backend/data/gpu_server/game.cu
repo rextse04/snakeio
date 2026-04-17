@@ -47,8 +47,8 @@ namespace {
     };
     constexpr snakeio::size_t kFoodSpatialNodesPerSession = snakeio::game_max_food;
     constexpr snakeio::scalar_t kFoodSpatialCellLength = snakeio::snake_max_width + snakeio::food_max_width;
-    constexpr unsigned kSendDescCapacity = 4096;
-    constexpr snakeio::size_t kPacketRingCapacity = 32u * 1024u * 1024u;
+    constexpr unsigned kSendDescCapacity = snakeio::game_max_sessions * snakeio::game_max_players;
+    constexpr snakeio::size_t kPacketRingCapacity = kSendDescCapacity * snakeio::out_packet_max_text_size;
     constexpr snakeio::size_t kPacketAadSize = 16;
     constexpr snakeio::size_t kPacketHeaderSize = 32;
     constexpr snakeio::size_t kIngressPacketCapacity = snakeio::in_packet_max_text_size + kPacketHeaderSize;

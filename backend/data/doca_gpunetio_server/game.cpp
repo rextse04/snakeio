@@ -1,8 +1,12 @@
-#include "game_kernels.cuh"
+#include "doca_gpunetio_server.hpp"
+#include <gpu_server/game_kernels.cuh>
 #include <game.hpp>
+#include <config.hpp>
 #include <network.hpp>
 #include <packet.hpp>
 #include <logger.hpp>
+#include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <cerrno>
 #include <mutex>
@@ -12,11 +16,29 @@ using namespace snakeio;
 
 namespace {
     constexpr snakeio::size_t clients_size = game_max_sessions * game_max_players;
-}
 
+    void copy_env_string(const char* key, std::span<char> out) noexcept {
+        if (out.empty()) return;
+        out[0] = '\0';
+        const char* value = std::getenv(key);
+        if (value == nullptr || *value == '\0') return;
+        std::snprintf(out.data(), out.size(), "%s", value);
+    }
+
+    doca_gpunetio_server::config selected_transport_config() noexcept {
+        doca_gpunetio_server::config cfg{};
+        cfg.backend = doca_gpunetio_server::backend_kind::doca_gpunetio;
+        cfg.port = data_plane_ext_port;
+
+        copy_env_string("SNAKEIO_DOCA_GPU_PCI", std::span(cfg.gpu_pci_addr));
+        copy_env_string("SNAKEIO_DOCA_NIC_PCI", std::span(cfg.nic_pci_addr));
+        return cfg;
+    }
+}
 
 struct game::impl {
     gpu::device_state gpu_state{};
+    doca_gpunetio_server::context transport{};
     std::mutex mutex;
 };
 
@@ -26,10 +48,16 @@ game::game() :
     auto& impl_ = get_impl();
     gpu::init_device_state(impl_.gpu_state);
     gpu::init_client_addrs_gpu(impl_.gpu_state, sizeof(sockaddr_storage) * clients_size);
+    doca_gpunetio_server::config transport_cfg = selected_transport_config();
+    if (!doca_gpunetio_server::start(impl_.transport, transport_cfg, &impl_.gpu_state)) {
+        logger::error("Failed to initialize DOCA GPUNetIO transport; aborting process.");
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 game::~game() noexcept {
     impl& impl_ = get_impl();
+    doca_gpunetio_server::stop(impl_.transport);
     gpu::destroy_client_addrs_gpu(impl_.gpu_state);
     gpu::destroy_device_state(impl_.gpu_state);
     impl_.~impl();
@@ -46,8 +74,10 @@ void game::add_session(id_t session_id,
 
 void game::port(std::stop_token stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
+
     std::byte buffer[in_packet_max_text_size + data_packet::header_size];
     sockaddr_storage client_addr{};
+
     while (true) {
         if (stop_token.stop_requested()) [[unlikely]] {
             logger::info("Data port received stop request, exiting.");
@@ -62,6 +92,7 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
             }
             continue;
         }
+
         {
             std::scoped_lock lock(impl_.mutex);
             gpu::ingest_packet_gpu(impl_.gpu_state, buffer, static_cast<snakeio::size_t>(recv_len));
@@ -79,17 +110,6 @@ void game::tick(std::stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
     std::scoped_lock lock(impl_.mutex);
     gpu::tick_active_sessions_gpu(impl_.gpu_state);
-
-    const unsigned send_count = *impl_.gpu_state.send_descs_size;
-    for (unsigned j = 0; j < send_count; ++j) {
-        const gpu::send_desc& desc = impl_.gpu_state.send_descs[j];
-        std::span<std::byte> bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
-        sockaddr_storage addr;
-        std::memcpy(&addr,
-            impl_.gpu_state.client_addrs + gpu::client_index(desc.session_id, desc.player_id) * sizeof(sockaddr_storage),
-            sizeof(sockaddr_storage));
-        sendto(sock, bytes, addr);
-    }
 
     for (id_t i = 0; i < game_max_sessions; ++i) {
         if (!sm_[i]) continue;

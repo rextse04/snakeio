@@ -4,12 +4,7 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
-
-#ifdef __CUDACC__
-#include <cuda/std/array>
-#else
 #include <array>
-#endif
 #include <compatibility.hpp>
 
 namespace snakeio {
