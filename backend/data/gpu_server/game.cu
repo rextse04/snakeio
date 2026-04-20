@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstring>
 #include <random>
+#include <format>
 
 namespace {
     constexpr unsigned kTickFlagAnyActive = 1u << 0;
@@ -828,7 +829,7 @@ namespace {
     }
 }
 
-void snakeio::gpu::init_device_state(device_state& s) noexcept {
+void snakeio::gpu::init_device_state(device_state& s) {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     std::uniform_int_distribution<std::uint_least64_t> dist;
@@ -892,6 +893,10 @@ void snakeio::gpu::init_device_state(device_state& s) noexcept {
     const unsigned rng_blocks = static_cast<unsigned>((s.rng_states_size + rng_threads - 1) / rng_threads);
     k_init_rng_states<<<rng_blocks, rng_threads>>>(s);
     cudaDeviceSynchronize();
+    if (cudaPeekAtLastError() != cudaSuccess) {
+        throw std::runtime_error(std::format(
+            "Unable to initialize GPU device state: {}.", cudaGetErrorString(cudaGetLastError())));
+    }
 }
 
 void snakeio::gpu::destroy_device_state(device_state& s) noexcept {

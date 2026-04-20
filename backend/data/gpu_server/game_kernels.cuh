@@ -121,7 +121,7 @@ namespace snakeio::gpu {
         unsigned* tick_flags;
     };
 
-    void init_device_state(device_state& state) noexcept;
+    void init_device_state(device_state& state);
     void destroy_device_state(device_state& state) noexcept;
 
     void add_session_gpu(device_state& state, id_t session_id,
