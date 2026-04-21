@@ -5,8 +5,8 @@
 #include <logger.hpp>
 #include <cstring>
 #include <cerrno>
-#include <mutex>
 #include <new>
+#include <cuda_runtime.h>
 
 using namespace snakeio;
 
@@ -16,8 +16,7 @@ namespace {
 
 
 struct game::impl {
-    gpu::device_state gpu_state{};
-    std::mutex mutex;
+    gpu::device_state gpu_state;
 };
 
 game::game() :
@@ -38,7 +37,6 @@ game::~game() noexcept {
 void game::add_session(id_t session_id,
     id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     impl& impl_ = get_impl();
-    std::scoped_lock lock(impl_.mutex);
     gpu::add_session_gpu(impl_.gpu_state, session_id, human_players, ai_players, max_tick,
         reinterpret_cast<const std::byte*>(keys.data()));
     sm_.activate(session_id);
@@ -62,32 +60,28 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
             }
             continue;
         }
-        {
-            std::scoped_lock lock(impl_.mutex);
-            gpu::ingest_packet_gpu(impl_.gpu_state, buffer, static_cast<snakeio::size_t>(recv_len));
-            if (*impl_.gpu_state.ingress_ok) {
-                const id_t session_id = *impl_.gpu_state.ingress_session_id;
-                const id_t player_id = *impl_.gpu_state.ingress_player_id;
-                std::memcpy(impl_.gpu_state.client_addrs + gpu::client_index(session_id, player_id) * sizeof(sockaddr_storage),
-                    &client_addr, sizeof(sockaddr_storage));
-            }
+        gpu::ingest_packet_gpu(impl_.gpu_state, buffer, static_cast<size_t>(recv_len));
+        if (*impl_.gpu_state.ingress_ok) {
+            const id_t session_id = *impl_.gpu_state.ingress_session_id;
+            const id_t player_id = *impl_.gpu_state.ingress_player_id;
+            cudaMemcpyAsync(impl_.gpu_state.client_addrs + gpu::client_index(session_id, player_id) * sizeof(sockaddr_storage),
+                &client_addr, sizeof(sockaddr_storage), cudaMemcpyHostToDevice);
         }
     }
 }
 
 void game::tick(std::stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
-    std::scoped_lock lock(impl_.mutex);
     gpu::tick_active_sessions_gpu(impl_.gpu_state);
 
     const unsigned send_count = *impl_.gpu_state.send_descs_size;
     for (unsigned j = 0; j < send_count; ++j) {
         const gpu::send_desc& desc = impl_.gpu_state.send_descs[j];
-        std::span<std::byte> bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
+        const std::span bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
         sockaddr_storage addr;
-        std::memcpy(&addr,
+        cudaMemcpyAsync(&addr,
             impl_.gpu_state.client_addrs + gpu::client_index(desc.session_id, desc.player_id) * sizeof(sockaddr_storage),
-            sizeof(sockaddr_storage));
+            sizeof(sockaddr_storage), cudaMemcpyDeviceToHost);
         sendto(sock, bytes, addr);
     }
 

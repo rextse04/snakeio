@@ -199,6 +199,8 @@ namespace {
         s.snake_frac_lengths[pid] = new_length;
     }
 
+    // Blocks: 1
+    // Threads: initial foods
     __global__ void k_add_session(snakeio::gpu::device_state st, snakeio::id_t sid,
         snakeio::id_t human, snakeio::id_t ai, snakeio::tick_t max_tick, const snakeio::key_t* keys) {
         auto& s = st.sessions[sid];
@@ -211,7 +213,7 @@ namespace {
             s.max_tick = max_tick;
             s.width = snakeio::game_width_psqp * sqrtf(static_cast<snakeio::scalar_t>(players));
             s.height = snakeio::game_height_psqp * sqrtf(static_cast<snakeio::scalar_t>(players));
-            s.food_size = snakeio::game_init_food_pp * players;
+            s.food_size = blockDim.x;
             s.delta.foods_added_size = 0;
             s.delta.foods_removed_size = 0;
         }
@@ -230,8 +232,8 @@ namespace {
             s.snake_statuses[i] = {snakeio::snake_status_t::alive, 0};
             s.snake_humans[i] = i < human;
             snake_seg(s, i, 0) = {
-                rand_range(0x201u + sid * 19u + i * 7u, 0.0f, s.width, st, rng_idx),
-                rand_range(0x301u + sid * 23u + i * 11u, 0.0f, s.height, st, rng_idx)
+                rand_range(0x201u + sid * 19u + i * 7u, 0, s.width, st, rng_idx),
+                rand_range(0x301u + sid * 23u + i * 11u, 0, s.height, st, rng_idx)
             };
             snake_seg(s, i, 1) = snake_seg(s, i, 0) -
                 snakeio::vector2d{cosf(s.snake_angles[i]), sinf(s.snake_angles[i])} * snakeio::snake_init_speed;
@@ -252,16 +254,14 @@ namespace {
             auto& c = st.clients[cidx];
             if (i < human) c.key = keys[i];
         }
-        if (threadIdx.x < s.food_size && threadIdx.x < snakeio::game_max_food) {
-            const snakeio::size_t i = threadIdx.x;
-            s.food_poss[i] = {
-                rand_range(0x401u + sid * 31u + i * 5u, 0.0f, s.width, st, rng_idx),
-                rand_range(0x501u + sid * 37u + i * 3u, 0.0f, s.height, st, rng_idx)
-            };
-                s.food_widths[i] = rand_range(
-                    0x601u + sid * 41u + i * 17u,
-                    snakeio::gen_food_min_width, snakeio::gen_food_max_width, st, rng_idx);
-        }
+        const snakeio::size_t i = threadIdx.x;
+        s.food_poss[i] = {
+            rand_range(0x401u + sid * 31u + i * 5u, 0.0f, s.width, st, rng_idx),
+            rand_range(0x501u + sid * 37u + i * 3u, 0.0f, s.height, st, rng_idx)
+        };
+        s.food_widths[i] = rand_range(
+            0x601u + sid * 41u + i * 17u,
+            snakeio::gen_food_min_width, snakeio::gen_food_max_width, st, rng_idx);
     }
 
     __global__ void k_ingest(snakeio::gpu::device_state st) {
@@ -960,10 +960,9 @@ void snakeio::gpu::destroy_device_state(device_state& s) noexcept {
 void snakeio::gpu::add_session_gpu(device_state& s, id_t sid,
     id_t human_players, id_t ai_players,
     tick_t max_tick, const std::byte* keys_bytes) noexcept {
-    std::memcpy(s.add_session_keys, keys_bytes, sizeof(key_t) * human_players);
-    const unsigned threads = static_cast<unsigned>(
-        (human_players + ai_players) < 64 ? 64 : (human_players + ai_players));
-    k_add_session<<<1, threads>>>(s, sid, human_players, ai_players, max_tick, s.add_session_keys);
+    cudaMemcpyAsync(s.add_session_keys, keys_bytes, sizeof(key_t) * human_players, cudaMemcpyHostToDevice);
+    k_add_session<<<1, game_init_food_pp * (human_players + ai_players)>>>(
+        s, sid, human_players, ai_players, max_tick, s.add_session_keys);
     cudaDeviceSynchronize();
 }
 
@@ -972,8 +971,8 @@ void snakeio::gpu::ingest_packet_gpu(device_state& s, const std::byte* packet, s
         *s.ingress_ok = false;
         return;
     }
-    std::memcpy(s.ingress_packet, packet, bytes_size);
-    *s.ingress_packet_size = bytes_size;
+    cudaMemcpyAsync(s.ingress_packet, packet, bytes_size, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice);
     k_ingest<<<1, 1>>>(s);
     cudaDeviceSynchronize();
 }

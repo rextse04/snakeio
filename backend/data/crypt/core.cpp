@@ -1,35 +1,9 @@
 #include <crypt/core.hpp>
-#include <cstddef>
+#include <utils.hpp>
 #include <compatibility.hpp>
+#include <cstddef>
 
-namespace {
-__host__ __device__ constexpr std::uint_least32_t load32_le(const std::byte* p) noexcept {
-    return (static_cast<std::uint_least32_t>(p[0]) << 0) |
-           (static_cast<std::uint_least32_t>(p[1]) << 8) |
-           (static_cast<std::uint_least32_t>(p[2]) << 16) |
-           (static_cast<std::uint_least32_t>(p[3]) << 24);
-}
-
-__host__ __device__ constexpr std::uint_least64_t load64_le(const std::byte* p) noexcept {
-    return (static_cast<std::uint_least64_t>(p[0]) << 0) |
-           (static_cast<std::uint_least64_t>(p[1]) << 8) |
-           (static_cast<std::uint_least64_t>(p[2]) << 16) |
-           (static_cast<std::uint_least64_t>(p[3]) << 24) |
-           (static_cast<std::uint_least64_t>(p[4]) << 32) |
-           (static_cast<std::uint_least64_t>(p[5]) << 40) |
-           (static_cast<std::uint_least64_t>(p[6]) << 48) |
-           (static_cast<std::uint_least64_t>(p[7]) << 56);
-}
-
-__host__ __device__ constexpr void store32_le(std::byte* p, std::uint_least32_t v) noexcept {
-    p[0] = static_cast<std::byte>(v >> 0);
-    p[1] = static_cast<std::byte>(v >> 8);
-    p[2] = static_cast<std::byte>(v >> 16);
-    p[3] = static_cast<std::byte>(v >> 24);
-}
-}
-
-SNAKEIO_CRYPT_API void snakeio::crypt::quarter_round(
+__host__ __device__ void snakeio::crypt::quarter_round(
     std::uint_least32_t& a, std::uint_least32_t& b, std::uint_least32_t& c, std::uint_least32_t& d) noexcept {
     a += b; d ^= a; d = (d << 16) | (d >> 16);
     c += d; b ^= c; b = (b << 12) | (b >> 20);
@@ -37,7 +11,7 @@ SNAKEIO_CRYPT_API void snakeio::crypt::quarter_round(
     c += d; b ^= c; b = (b << 7) | (b >> 25);
 }
 
-SNAKEIO_CRYPT_API std::array<std::uint_least32_t, 16> snakeio::crypt::chacha20_block(
+__host__ __device__ std::array<std::uint_least32_t, 16> snakeio::crypt::chacha20_block(
     const key_t& key, std::uint_least32_t counter, std::span<const std::byte, 12> nonce) noexcept {
     std::array<std::uint_least32_t, 16> out;
     out[0] = 0x61707865;
@@ -45,11 +19,11 @@ SNAKEIO_CRYPT_API std::array<std::uint_least32_t, 16> snakeio::crypt::chacha20_b
     out[2] = 0x79622d32;
     out[3] = 0x6b206574;
     for (std::size_t i = 0; i < std::tuple_size_v<key_t> / 4; ++i) {
-        out[4 + i] = load32_le(key.data() + i*4);
+        out[4 + i] = load_32(std::span<const std::byte, 4>(key.begin() + i*4, 4));
     }
     out[12] = counter;
     for (std::size_t i = 0; i < nonce.size() / 4; ++i) {
-        out[13 + i] = load32_le(nonce.data() + i*4);
+        out[13 + i] = load_32(std::span<const std::byte, 4>(nonce.begin() + i*4, 4));
     }
     auto state = out;
     for (int i = 0; i < 10; ++i) {
@@ -66,7 +40,7 @@ SNAKEIO_CRYPT_API std::array<std::uint_least32_t, 16> snakeio::crypt::chacha20_b
     return out;
 }
 
-SNAKEIO_CRYPT_API void snakeio::crypt::chacha20_encrypt(const key_t& key, std::uint_least32_t counter,
+__host__ __device__ void snakeio::crypt::chacha20_encrypt(const key_t& key, std::uint_least32_t counter,
     std::span<const std::byte, 12> nonce, std::span<std::byte> text) noexcept {
     std::size_t i = 0;
     for (std::size_t j = 0; j < text.size() / 64; ++j) {
@@ -92,8 +66,8 @@ struct radix26 {
 
     __host__ __device__ static constexpr radix26 load(std::span<const std::byte, 16> bytes) noexcept {
         radix26 out;
-        const std::uint_least64_t lo = load64_le(bytes.data()),
-            hi = load64_le(bytes.data() + 8);
+        const std::uint_least64_t lo = snakeio::load_64(bytes.subspan<0, 8>()),
+            hi = snakeio::load_64(bytes.subspan<8, 8>());
         constexpr std::uint_least64_t mask = (base_type(1) << radix) - 1;
         out.limbs[0] = lo & mask;
         out.limbs[1] = (lo >> radix) & mask;
@@ -157,7 +131,7 @@ public:
     }
 };
 
-SNAKEIO_CRYPT_API void snakeio::crypt::poly1305_mac(
+__host__ __device__ void snakeio::crypt::poly1305_mac(
     std::span<std::byte, 16> out, std::span<const std::byte> text, const key_t& key) noexcept {
     auto r = radix26::load(std::span<const std::byte, 16>(key.begin(), 16)),
         s = radix26::load(std::span<const std::byte, 16>(key.begin() + 16, 16));
@@ -178,13 +152,12 @@ SNAKEIO_CRYPT_API void snakeio::crypt::poly1305_mac(
     a.store(out);
 }
 
-SNAKEIO_CRYPT_API snakeio::key_t snakeio::crypt::poly1305_key_gen(
+__host__ __device__ snakeio::key_t snakeio::crypt::poly1305_key_gen(
     const key_t& key, std::span<const std::byte, 12> nonce) noexcept {
     key_t out;
     const auto block = chacha20_block(key, 0, nonce);
     for (std::size_t i = 0; i < out.size() / 4; ++i) {
-        store32_le(out.data() + i*4, block[i]);
+        store_32(std::span<std::byte, 4>(out.begin() + i*4, 4), block[i]);
     }
     return out;
 }
-

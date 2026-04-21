@@ -1,4 +1,3 @@
-/* Include this file after all includes involving std. */
 #pragma once
 
 #ifndef __CUDACC__
