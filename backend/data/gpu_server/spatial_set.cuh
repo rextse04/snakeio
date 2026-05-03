@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <algorithm>
 #include <cuda/iterator>
+#include <cuda_runtime_api.h>
 #include <cub/device/device_segmented_sort.cuh>
 
 namespace snakeio::gpu {
@@ -72,11 +73,6 @@ namespace snakeio::gpu {
             }
         }
     }
-    // GetPos must be device-capable.
-    // SetPos(Node& node, vector2d key):
-    // - It is guaranteed that setPos will not be used on active nodes.
-    // - Semantic requirement: SetPos(node, key) => GetPos(node) == key.
-    // - Must be device-capable.
     template <scalar_t WorldWidth, scalar_t WorldHeight, scalar_t CellLength, size_t NodesSize, id_t BatchSize,
         typename Node = vector2d, auto GetPos = cuda::std::identity{}, auto SetPos = detail::default_setter<Node>>
     requires requires(Node& node, vector2d key) {
@@ -102,16 +98,23 @@ namespace snakeio::gpu {
         size_type *indices, *indices_buffer_;
         Node *nodes, *nodes_buffer_;
 
-        __host__ spatial_set_batch() {
+        cudaStream_t stream_{};
+        void* cub_temp_{nullptr};
+        std::size_t cub_temp_bytes_{0};
+
+        __host__ explicit spatial_set_batch(cudaStream_t stream = nullptr) : stream_(stream) {
             cudaMalloc(&begin_offsets, sizeof(size_type) * BatchSize);
             cudaMalloc(&end_offsets, sizeof(size_type) * BatchSize);
             cudaMalloc(&indices, sizeof(size_type) * BatchSize * NodesSize);
             cudaMalloc(&indices_buffer_, sizeof(size_type) * BatchSize * NodesSize);
             cudaMalloc(&nodes, sizeof(Node) * BatchSize * NodesSize);
             cudaMalloc(&nodes_buffer_, sizeof(Node) * BatchSize * NodesSize);
-            detail::init<<<grid_dim, block_dim>>>(*this);
+            detail::init<<<grid_dim, block_dim, 0, stream_>>>(*this);
         }
         __host__ void destroy() {
+            cudaFree(cub_temp_);
+            cub_temp_ = nullptr;
+            cub_temp_bytes_ = 0;
             cudaFree(begin_offsets);
             cudaFree(end_offsets);
             cudaFree(indices);
@@ -125,29 +128,40 @@ namespace snakeio::gpu {
             return batch_idx * NodesSize;
         }
         __host__ void refresh() noexcept {
-            detail::compute_indices<<<grid_dim, block_dim>>>(*this);
-            void* d_temp_storage = nullptr;
-            std::size_t d_temp_storage_bytes = 0;
-            cub::DeviceSegmentedSort::SortPairs(d_temp_storage, d_temp_storage_bytes,
-                indices, indices_buffer_, nodes, nodes_buffer_,
-                BatchSize * NodesSize, BatchSize,
-                begin_offsets, end_offsets);
-            cudaMalloc(&d_temp_storage, d_temp_storage_bytes);
-            cub::DeviceSegmentedSort::SortPairs(d_temp_storage, d_temp_storage_bytes,
-                indices, indices_buffer_, nodes, nodes_buffer_,
-                BatchSize * NodesSize, BatchSize,
-                begin_offsets, end_offsets);
-            cudaDeviceSynchronize();
-            cudaFree(d_temp_storage);
-            size_type indices_[NodesSize];
-            std::fill(indices_, indices_ + NodesSize, 999);
-            cudaMemcpy(indices_, indices_buffer_, NodesSize * sizeof(size_type), cudaMemcpyDeviceToHost);
+            detail::compute_indices<<<grid_dim, block_dim, 0, stream_>>>(*this);
+            if (cub_temp_bytes_ == 0) {
+                cub::DeviceSegmentedSort::SortPairs(
+                    nullptr,
+                    cub_temp_bytes_,
+                    indices,
+                    indices_buffer_,
+                    nodes,
+                    nodes_buffer_,
+                    static_cast<::cuda::std::int64_t>(BatchSize * NodesSize),
+                    static_cast<::cuda::std::int64_t>(BatchSize),
+                    begin_offsets,
+                    end_offsets,
+                    stream_);
+                cudaMalloc(&cub_temp_, cub_temp_bytes_);
+            }
+            cub::DeviceSegmentedSort::SortPairs(
+                cub_temp_,
+                cub_temp_bytes_,
+                indices,
+                indices_buffer_,
+                nodes,
+                nodes_buffer_,
+                static_cast<::cuda::std::int64_t>(BatchSize * NodesSize),
+                static_cast<::cuda::std::int64_t>(BatchSize),
+                begin_offsets,
+                end_offsets,
+                stream_);
             std::swap(indices, indices_buffer_);
             std::swap(nodes, nodes_buffer_);
         }
         __host__ void find_possible(const vector2d* keys, const scalar_t* radii, unsigned keys_per_batch,
             const value_type** out, std::size_t max_per_key) const noexcept {
-            detail::find_possible<<<BatchSize, keys_per_batch>>>(*this, keys, radii, out, max_per_key);
+            detail::find_possible<<<BatchSize, keys_per_batch, 0, stream_>>>(*this, keys, radii, out, max_per_key);
         }
     };
 }

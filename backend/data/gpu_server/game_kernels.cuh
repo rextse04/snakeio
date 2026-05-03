@@ -119,6 +119,21 @@ namespace snakeio::gpu {
         bool* tick_term_emit_mask;
         bool* tick_inc_mask;
         unsigned* tick_flags;
+
+        bool* session_active_flags;
+        void* stream{};
+
+        struct ingress_host_copy {
+            bool ok;
+            id_t session_id;
+            id_t player_id;
+        };
+        ingress_host_copy* host_ingress{};
+        unsigned* host_tick_flags{};
+        bool* host_session_active{};
+        unsigned* host_send_descs_size{};
+        send_desc* host_send_descs{};
+        std::byte* host_packet_copy{};
     };
 
     void init_device_state(device_state& state);

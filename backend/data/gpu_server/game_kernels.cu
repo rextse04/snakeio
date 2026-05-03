@@ -17,6 +17,9 @@ namespace {
     constexpr unsigned kTickFlagAnyTick0SnapshotEmit = 1u << 3;
     constexpr unsigned kTickFlagAnyDeltaEmit = 1u << 4;
     constexpr unsigned kTickFlagAnyTermEmit = 1u << 5;
+    constexpr unsigned kSidThreads = 256;
+    constexpr unsigned kSidBlocks =
+        (snakeio::game_max_sessions + kSidThreads - 1) / kSidThreads;
 
     struct snake_spatial_node {
         snakeio::vector2d pos;
@@ -72,6 +75,10 @@ namespace {
 
     using snakeio::gpu::client_index;
     using snakeio::gpu::snake_segment_index;
+
+    __host__ inline cudaStream_t gpu_stream_of(snakeio::gpu::device_state& st) noexcept {
+        return reinterpret_cast<cudaStream_t>(st.stream);
+    }
 
     __host__ snake_spatial_set& snake_set(snakeio::gpu::device_state& s) noexcept {
         return *static_cast<snake_spatial_set*>(s.snake_spatial_set);
@@ -436,9 +443,15 @@ namespace {
         };
     }
 
+    __global__ void k_pack_session_active(snakeio::gpu::device_state st) {
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions) return;
+        st.session_active_flags[sid] = st.sessions[sid].active;
+    }
+
     __global__ void k_reset_collision_state_all(snakeio::gpu::device_state st, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !gt0_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !gt0_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active) return;
         s.delta.foods_added_size = 0;
@@ -450,8 +463,8 @@ namespace {
     }
 
     __global__ void k_begin_spatial_batch_all(snake_spatial_set set, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions) return;
         const auto begin = snake_spatial_set::batch_offset(sid);
         set.end_offsets[sid] = gt0_mask[sid] ? begin : begin;
     }
@@ -473,8 +486,8 @@ namespace {
     }
 
     __global__ void k_finalize_spatial_batch_all(snake_spatial_set set, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !gt0_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !gt0_mask[sid]) return;
         const snakeio::size_t begin = snake_spatial_set::batch_offset(sid);
         const snakeio::size_t end = set.end_offsets[sid];
         if (end < begin + snake_spatial_set::max_nodes_size()) {
@@ -524,8 +537,8 @@ namespace {
     }
 
     __global__ void k_apply_kills_and_spawn_food_all(snakeio::gpu::device_state st, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !gt0_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !gt0_mask[sid]) return;
         const snakeio::size_t rng_idx = client_index(sid, 0);
         auto& s = st.sessions[sid];
         if (!s.active) return;
@@ -545,8 +558,8 @@ namespace {
     }
 
     __global__ void k_begin_food_spatial_batch_all(food_spatial_set set, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions) return;
         const auto begin = food_spatial_set::batch_offset(sid);
         set.end_offsets[sid] = gt0_mask[sid] ? begin : begin;
     }
@@ -564,8 +577,8 @@ namespace {
     }
 
     __global__ void k_finalize_food_spatial_batch_all(food_spatial_set set, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !gt0_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !gt0_mask[sid]) return;
         const snakeio::size_t begin = food_spatial_set::batch_offset(sid);
         const snakeio::size_t end = set.end_offsets[sid];
         if (end < begin + food_spatial_set::max_nodes_size()) {
@@ -575,8 +588,8 @@ namespace {
 
     __global__ void k_collide_food_and_compact_all(
         snakeio::gpu::device_state st, food_spatial_set set, const bool* gt0_mask) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !gt0_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !gt0_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active) return;
         for (snakeio::size_t i = 0; i < s.food_size; ++i) s.food_removed_flags[i] = 0;
@@ -655,8 +668,8 @@ namespace {
     __global__ void k_serialize_snapshot_all(
         snakeio::gpu::device_state st, const bool* active_mask,
         std::byte* out_all, snakeio::size_t* out_sizes) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !active_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !active_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active) return;
         std::byte* out = out_all + static_cast<snakeio::size_t>(sid) * snakeio::snapshot_packet_max_text_size;
@@ -702,8 +715,8 @@ namespace {
     __global__ void k_serialize_delta_all(
         snakeio::gpu::device_state st, const bool* active_mask,
         std::byte* out_all, snakeio::size_t* out_sizes) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !active_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !active_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active || s.tick == 0) return;
         std::byte* out = out_all + static_cast<snakeio::size_t>(sid) * snakeio::delta_packet_max_text_size;
@@ -742,8 +755,8 @@ namespace {
     __global__ void k_serialize_lobby_all(
         snakeio::gpu::device_state st, const bool* active_mask,
         std::byte* out_all, snakeio::size_t* out_sizes) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !active_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !active_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active || s.tick != 0) return;
         std::byte* out = out_all + static_cast<snakeio::size_t>(sid) * snakeio::lobby_status_max_text_size;
@@ -759,8 +772,8 @@ namespace {
     __global__ void k_serialize_termination_all(
         snakeio::gpu::device_state st, const bool* active_mask,
         std::byte* out_all, snakeio::size_t* out_sizes) {
-        const snakeio::id_t sid = blockIdx.x;
-        if (threadIdx.x || !active_mask[sid]) return;
+        const snakeio::id_t sid = blockIdx.x * blockDim.x + threadIdx.x;
+        if (sid >= snakeio::game_max_sessions || !active_mask[sid]) return;
         auto& s = st.sessions[sid];
         if (!s.active || s.tick == 0) return;
         std::byte* out = out_all + static_cast<snakeio::size_t>(sid) * snakeio::termination_max_text_size;
@@ -827,6 +840,24 @@ namespace {
             }
         }
     }
+
+    __host__ void finalize_tick_host_visible(snakeio::gpu::device_state& s) noexcept {
+        k_pack_session_active<<<kSidBlocks, kSidThreads, 0, gpu_stream_of(s)>>>(s);
+        cudaMemcpyAsync(s.host_send_descs_size, s.send_descs_size, sizeof(unsigned),
+            cudaMemcpyDeviceToHost, gpu_stream_of(s));
+        cudaStreamSynchronize(gpu_stream_of(s));
+        const unsigned n = *s.host_send_descs_size;
+        if (n > s.send_descs_capacity) {
+            return;
+        }
+        if (n > 0) {
+            cudaMemcpyAsync(s.host_send_descs, s.send_descs, sizeof(snakeio::gpu::send_desc) * n,
+                cudaMemcpyDeviceToHost, gpu_stream_of(s));
+        }
+        cudaMemcpyAsync(s.host_session_active, s.session_active_flags,
+            sizeof(bool) * snakeio::game_max_sessions, cudaMemcpyDeviceToHost, gpu_stream_of(s));
+        cudaStreamSynchronize(gpu_stream_of(s));
+    }
 }
 
 void snakeio::gpu::init_device_state(device_state& s) {
@@ -837,40 +868,57 @@ void snakeio::gpu::init_device_state(device_state& s) {
     s.rng_offset = dist(gen);
     s.rng_states_size = kRngStatesSize;
 
-    s.snake_spatial_set = new snake_spatial_set;
-    s.food_spatial_set = new food_spatial_set;
-    cudaMallocManaged(&s.plain_delta_all,
+    cudaStream_t gpu_stream{};
+    if (cudaStreamCreateWithFlags(&gpu_stream, cudaStreamNonBlocking) != cudaSuccess) {
+        throw std::runtime_error("Unable to create CUDA stream for GPU device state.");
+    }
+    s.stream = reinterpret_cast<void*>(gpu_stream);
+
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_ingress), sizeof(device_state::ingress_host_copy), cudaHostAllocPortable);
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_tick_flags), sizeof(unsigned), cudaHostAllocPortable);
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_session_active),
+        sizeof(bool) * game_max_sessions, cudaHostAllocPortable);
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_send_descs_size), sizeof(unsigned), cudaHostAllocPortable);
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_send_descs),
+        sizeof(send_desc) * kSendDescCapacity, cudaHostAllocPortable);
+    cudaHostAlloc(reinterpret_cast<void**>(&s.host_packet_copy),
+        out_packet_max_text_size, cudaHostAllocPortable);
+
+    s.snake_spatial_set = new snake_spatial_set(gpu_stream);
+    s.food_spatial_set = new food_spatial_set(gpu_stream);
+    cudaMalloc(&s.plain_delta_all,
         delta_packet_max_text_size * static_cast<size_t>(game_max_sessions));
-    cudaMallocManaged(&s.plain_delta_sizes_all, sizeof(size_t) * game_max_sessions);
-    cudaMallocManaged(&s.plain_lobby_all,
+    cudaMalloc(&s.plain_delta_sizes_all, sizeof(size_t) * game_max_sessions);
+    cudaMalloc(&s.plain_lobby_all,
         lobby_status_max_text_size * static_cast<size_t>(game_max_sessions));
-    cudaMallocManaged(&s.plain_lobby_sizes_all, sizeof(size_t) * game_max_sessions);
-    cudaMallocManaged(&s.plain_snapshot_all,
+    cudaMalloc(&s.plain_lobby_sizes_all, sizeof(size_t) * game_max_sessions);
+    cudaMalloc(&s.plain_snapshot_all,
         snapshot_packet_max_text_size * static_cast<size_t>(game_max_sessions));
-    cudaMallocManaged(&s.plain_snapshot_sizes_all, sizeof(size_t) * game_max_sessions);
-    cudaMallocManaged(&s.plain_termination_all,
+    cudaMalloc(&s.plain_snapshot_sizes_all, sizeof(size_t) * game_max_sessions);
+    cudaMalloc(&s.plain_termination_all,
         termination_max_text_size * static_cast<size_t>(game_max_sessions));
-    cudaMallocManaged(&s.plain_termination_sizes_all, sizeof(size_t) * game_max_sessions);
-    cudaMallocManaged(&s.add_session_keys, sizeof(key_t) * game_max_players);
-    cudaMallocManaged(&s.sessions, sizeof(session_state) * game_max_sessions);
-    cudaMallocManaged(&s.clients, sizeof(client_state) * kClientsSize);
-    cudaMallocManaged(&s.client_ticks, sizeof(tick_t) * kClientsSize);
-    cudaMallocManaged(&s.client_last_snapshot_requested, sizeof(bool) * kClientsSize);
-    cudaMallocManaged(&s.client_last_boost, sizeof(bool) * kClientsSize);
-    cudaMallocManaged(&s.client_last_angle, sizeof(scalar_t) * kClientsSize);
-    cudaMallocManaged(&s.packet_ring, kPacketRingCapacity);
-    cudaMallocManaged(&s.packet_ring_head, sizeof(unsigned));
-    cudaMallocManaged(&s.send_descs, sizeof(send_desc) * kSendDescCapacity);
-    cudaMallocManaged(&s.send_descs_size, sizeof(unsigned));
-    cudaMallocManaged(&s.ingress_ok, sizeof(bool));
-    cudaMallocManaged(&s.ingress_session_id, sizeof(id_t));
-    cudaMallocManaged(&s.ingress_player_id, sizeof(id_t));
-    cudaMallocManaged(&s.ingress_packet, kIngressPacketCapacity);
-    cudaMallocManaged(&s.ingress_packet_size, sizeof(size_t));
-    cudaMallocManaged(&s.rng_states, sizeof(curandStatePhilox4_32_10_t) * s.rng_states_size);
+    cudaMalloc(&s.plain_termination_sizes_all, sizeof(size_t) * game_max_sessions);
+    cudaMalloc(&s.add_session_keys, sizeof(key_t) * game_max_players);
+    cudaMalloc(&s.sessions, sizeof(session_state) * game_max_sessions);
+    cudaMalloc(&s.clients, sizeof(client_state) * kClientsSize);
+    cudaMalloc(&s.client_ticks, sizeof(tick_t) * kClientsSize);
+    cudaMalloc(&s.client_last_snapshot_requested, sizeof(bool) * kClientsSize);
+    cudaMalloc(&s.client_last_boost, sizeof(bool) * kClientsSize);
+    cudaMalloc(&s.client_last_angle, sizeof(scalar_t) * kClientsSize);
+    cudaMalloc(&s.packet_ring, kPacketRingCapacity);
+    cudaMalloc(&s.packet_ring_head, sizeof(unsigned));
+    cudaMalloc(&s.send_descs, sizeof(send_desc) * kSendDescCapacity);
+    cudaMalloc(&s.send_descs_size, sizeof(unsigned));
+    cudaMalloc(&s.ingress_ok, sizeof(bool));
+    cudaMalloc(&s.ingress_session_id, sizeof(id_t));
+    cudaMalloc(&s.ingress_player_id, sizeof(id_t));
+    cudaMalloc(&s.ingress_packet, kIngressPacketCapacity);
+    cudaMalloc(&s.ingress_packet_size, sizeof(size_t));
+    cudaMalloc(&s.rng_states, sizeof(curandStatePhilox4_32_10_t) * s.rng_states_size);
+    cudaMalloc(&s.session_active_flags, sizeof(bool) * game_max_sessions);
     s.client_addrs = nullptr;
-    cudaMallocManaged(&s.tick_masks, sizeof(bool) * game_max_sessions * 7u);
-    cudaMallocManaged(&s.tick_flags, sizeof(unsigned));
+    cudaMalloc(&s.tick_masks, sizeof(bool) * game_max_sessions * 7u);
+    cudaMalloc(&s.tick_flags, sizeof(unsigned));
     s.tick_active_mask = s.tick_masks + game_max_sessions * 0u;
     s.tick_gt0_mask = s.tick_masks + game_max_sessions * 1u;
     s.tick_lobby_emit_mask = s.tick_masks + game_max_sessions * 2u;
@@ -881,18 +929,18 @@ void snakeio::gpu::init_device_state(device_state& s) {
     s.packet_ring_capacity = kPacketRingCapacity;
     s.send_descs_capacity = kSendDescCapacity;
     s.ingress_packet_capacity = kIngressPacketCapacity;
-    cudaMemset(s.sessions, 0, sizeof(session_state) * game_max_sessions);
-    cudaMemset(s.clients, 0, sizeof(client_state) * kClientsSize);
-    cudaMemset(s.client_ticks, 0, sizeof(tick_t) * kClientsSize);
-    cudaMemset(s.client_last_snapshot_requested, 0, sizeof(bool) * kClientsSize);
-    cudaMemset(s.client_last_boost, 0, sizeof(bool) * kClientsSize);
-    cudaMemset(s.client_last_angle, 0, sizeof(scalar_t) * kClientsSize);
-    cudaMemset(s.tick_masks, 0, sizeof(bool) * game_max_sessions * 7u);
-    *s.tick_flags = 0;
+    cudaMemsetAsync(s.sessions, 0, sizeof(session_state) * game_max_sessions, gpu_stream);
+    cudaMemsetAsync(s.clients, 0, sizeof(client_state) * kClientsSize, gpu_stream);
+    cudaMemsetAsync(s.client_ticks, 0, sizeof(tick_t) * kClientsSize, gpu_stream);
+    cudaMemsetAsync(s.client_last_snapshot_requested, 0, sizeof(bool) * kClientsSize, gpu_stream);
+    cudaMemsetAsync(s.client_last_boost, 0, sizeof(bool) * kClientsSize, gpu_stream);
+    cudaMemsetAsync(s.client_last_angle, 0, sizeof(scalar_t) * kClientsSize, gpu_stream);
+    cudaMemsetAsync(s.tick_masks, 0, sizeof(bool) * game_max_sessions * 7u, gpu_stream);
+    cudaMemsetAsync(s.tick_flags, 0, sizeof(unsigned), gpu_stream);
     constexpr unsigned rng_threads = 256;
     const unsigned rng_blocks = static_cast<unsigned>((s.rng_states_size + rng_threads - 1) / rng_threads);
-    k_init_rng_states<<<rng_blocks, rng_threads>>>(s);
-    cudaDeviceSynchronize();
+    k_init_rng_states<<<rng_blocks, rng_threads, 0, gpu_stream>>>(s);
+    cudaStreamSynchronize(gpu_stream);
     if (cudaPeekAtLastError() != cudaSuccess) {
         throw std::runtime_error(std::format(
             "Unable to initialize GPU device state: {}.", cudaGetErrorString(cudaGetLastError())));
@@ -900,6 +948,24 @@ void snakeio::gpu::init_device_state(device_state& s) {
 }
 
 void snakeio::gpu::destroy_device_state(device_state& s) noexcept {
+    if (s.stream) {
+        cudaStreamSynchronize(gpu_stream_of(s));
+    }
+    cudaFreeHost(s.host_ingress);
+    s.host_ingress = nullptr;
+    cudaFreeHost(s.host_tick_flags);
+    s.host_tick_flags = nullptr;
+    cudaFreeHost(s.host_session_active);
+    s.host_session_active = nullptr;
+    cudaFreeHost(s.host_send_descs_size);
+    s.host_send_descs_size = nullptr;
+    cudaFreeHost(s.host_send_descs);
+    s.host_send_descs = nullptr;
+    cudaFreeHost(s.host_packet_copy);
+    s.host_packet_copy = nullptr;
+
+    cudaFree(s.session_active_flags);
+    s.session_active_flags = nullptr;
     cudaFree(s.sessions);
     cudaFree(s.clients);
     cudaFree(s.client_ticks);
@@ -955,30 +1021,38 @@ void snakeio::gpu::destroy_device_state(device_state& s) noexcept {
     s.add_session_keys = nullptr;
     s.rng_seed = 0;
     s.rng_offset = 0;
+
+    if (s.stream) {
+        cudaStreamDestroy(gpu_stream_of(s));
+        s.stream = nullptr;
+    }
 }
 
 void snakeio::gpu::add_session_gpu(device_state& s, id_t sid,
     id_t human_players, id_t ai_players,
     tick_t max_tick, const std::byte* keys_bytes) noexcept {
-    cudaMemcpyAsync(s.add_session_keys, keys_bytes, sizeof(key_t) * human_players, cudaMemcpyHostToDevice);
-    k_add_session<<<1, game_init_food_pp * (human_players + ai_players)>>>(
+    cudaMemcpyAsync(s.add_session_keys, keys_bytes, sizeof(key_t) * human_players, cudaMemcpyHostToDevice, gpu_stream_of(s));
+    k_add_session<<<1, game_init_food_pp * (human_players + ai_players), 0, gpu_stream_of(s)>>>(
         s, sid, human_players, ai_players, max_tick, s.add_session_keys);
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(gpu_stream_of(s));
 }
 
 void snakeio::gpu::ingest_packet_gpu(device_state& s, const std::byte* packet, size_t bytes_size) noexcept {
     if (bytes_size > s.ingress_packet_capacity) {
-        *s.ingress_ok = false;
+        s.host_ingress->ok = false;
         return;
     }
-    cudaMemcpyAsync(s.ingress_packet, packet, bytes_size, cudaMemcpyHostToDevice);
-    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice);
-    k_ingest<<<1, 1>>>(s);
-    cudaDeviceSynchronize();
+    cudaMemcpyAsync(s.ingress_packet, packet, bytes_size, cudaMemcpyHostToDevice, gpu_stream_of(s));
+    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice, gpu_stream_of(s));
+    k_ingest<<<1, 1, 0, gpu_stream_of(s)>>>(s);
+    cudaMemcpyAsync(&s.host_ingress->ok, s.ingress_ok, sizeof(bool), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaMemcpyAsync(&s.host_ingress->session_id, s.ingress_session_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaMemcpyAsync(&s.host_ingress->player_id, s.ingress_player_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaStreamSynchronize(gpu_stream_of(s));
 }
 
 void snakeio::gpu::init_client_addrs_gpu(device_state& s, size_t bytes_size) noexcept {
-    cudaMallocManaged(&s.client_addrs, bytes_size);
+    cudaMalloc(&s.client_addrs, bytes_size);
     cudaMemset(s.client_addrs, 0, bytes_size);
 }
 
@@ -989,8 +1063,8 @@ void snakeio::gpu::destroy_client_addrs_gpu(device_state& s) noexcept {
 
 
 void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
-    *s.packet_ring_head = 0;
-    *s.send_descs_size = 0;
+    cudaMemsetAsync(s.packet_ring_head, 0, sizeof(unsigned), gpu_stream_of(s));
+    cudaMemsetAsync(s.send_descs_size, 0, sizeof(unsigned), gpu_stream_of(s));
 
     bool* d_active_mask = s.tick_active_mask;
     bool* d_gt0_mask = s.tick_gt0_mask;
@@ -1002,8 +1076,8 @@ void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
 
     constexpr unsigned sid_threads = 256;
     constexpr unsigned sid_blocks = (game_max_sessions + sid_threads - 1) / sid_threads;
-    *s.tick_flags = 0;
-    k_build_active_gt0_masks<<<sid_blocks, sid_threads>>>(
+    cudaMemsetAsync(s.tick_flags, 0, sizeof(unsigned), gpu_stream_of(s));
+    k_build_active_gt0_masks<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
         s,
         d_active_mask,
         d_gt0_mask,
@@ -1013,63 +1087,62 @@ void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
         d_term_emit_mask,
         d_tick_inc_mask,
         s.tick_flags);
-    cudaDeviceSynchronize();
-    const bool any_active = (*s.tick_flags & kTickFlagAnyActive) != 0;
-    const bool any_gt0 = (*s.tick_flags & kTickFlagAnyGt0) != 0;
-    if (!any_active) return;
+    cudaMemcpyAsync(s.host_tick_flags, s.tick_flags, sizeof(unsigned), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaStreamSynchronize(gpu_stream_of(s));
+    const unsigned build_flags = *s.host_tick_flags;
+    const bool any_active = (build_flags & kTickFlagAnyActive) != 0;
+    const bool any_gt0 = (build_flags & kTickFlagAnyGt0) != 0;
+    if (!any_active) {
+        finalize_tick_host_visible(s);
+        return;
+    }
 
     constexpr unsigned threads = 128;
     constexpr unsigned blocks = (game_max_players + threads - 1) / threads;
-    k_prepare_inputs_all<<<dim3(blocks, game_max_sessions), threads>>>(s, d_active_mask);
-    cudaDeviceSynchronize();
-    k_serialize_lobby_all<<<game_max_sessions, 1>>>(
+    k_prepare_inputs_all<<<dim3(blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(s, d_active_mask);
+    k_serialize_lobby_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
         s, d_active_mask, s.plain_lobby_all, s.plain_lobby_sizes_all);
-    k_serialize_snapshot_all<<<game_max_sessions, 1>>>(
+    k_serialize_snapshot_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
         s, d_active_mask, s.plain_snapshot_all, s.plain_snapshot_sizes_all);
-    cudaDeviceSynchronize();
 
     if (any_gt0) {
         auto& snake_spatial = snake_set(s);
         auto& food_spatial = food_set(s);
-        k_apply_inputs_all<<<dim3(blocks, game_max_sessions), threads>>>(s, d_gt0_mask);
-        k_move_all<<<dim3(blocks, game_max_sessions), threads>>>(s, d_gt0_mask);
-        k_reset_collision_state_all<<<game_max_sessions, 1>>>(s, d_gt0_mask);
+        k_apply_inputs_all<<<dim3(blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(s, d_gt0_mask);
+        k_move_all<<<dim3(blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(s, d_gt0_mask);
+        k_reset_collision_state_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(s, d_gt0_mask);
 
-        k_begin_spatial_batch_all<<<game_max_sessions, 1>>>(snake_spatial, d_gt0_mask);
+        k_begin_spatial_batch_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(snake_spatial, d_gt0_mask);
         constexpr unsigned snake_node_threads = 256;
         constexpr unsigned snake_node_blocks =
             (kSnakeSpatialNodesPerSession + snake_node_threads - 1) / snake_node_threads;
-        k_fill_spatial_nodes_all<<<dim3(snake_node_blocks, game_max_sessions), snake_node_threads>>>(
+        k_fill_spatial_nodes_all<<<dim3(snake_node_blocks, game_max_sessions), snake_node_threads, 0, gpu_stream_of(s)>>>(
             s, snake_spatial, d_gt0_mask);
-        k_finalize_spatial_batch_all<<<game_max_sessions, 1>>>(snake_spatial, d_gt0_mask);
-        cudaDeviceSynchronize();
+        k_finalize_spatial_batch_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(snake_spatial, d_gt0_mask);
         snake_spatial.refresh();
 
-        k_mark_wall_and_snake_collisions_all<<<dim3(blocks, game_max_sessions), threads>>>(
+        k_mark_wall_and_snake_collisions_all<<<dim3(blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(
             s, snake_spatial, d_gt0_mask);
-        k_apply_kills_and_spawn_food_all<<<game_max_sessions, 1>>>(s, d_gt0_mask);
+        k_apply_kills_and_spawn_food_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(s, d_gt0_mask);
 
-        k_begin_food_spatial_batch_all<<<game_max_sessions, 1>>>(food_spatial, d_gt0_mask);
+        k_begin_food_spatial_batch_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(food_spatial, d_gt0_mask);
         constexpr unsigned food_node_threads = 256;
         constexpr unsigned food_node_blocks =
             (game_max_food + food_node_threads - 1) / food_node_threads;
-        k_fill_food_spatial_nodes_all<<<dim3(food_node_blocks, game_max_sessions), food_node_threads>>>(
+        k_fill_food_spatial_nodes_all<<<dim3(food_node_blocks, game_max_sessions), food_node_threads, 0, gpu_stream_of(s)>>>(
             s, food_spatial, d_gt0_mask);
-        k_finalize_food_spatial_batch_all<<<game_max_sessions, 1>>>(food_spatial, d_gt0_mask);
-        cudaDeviceSynchronize();
+        k_finalize_food_spatial_batch_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(food_spatial, d_gt0_mask);
         food_spatial.refresh();
 
-        k_collide_food_and_compact_all<<<game_max_sessions, 1>>>(s, food_spatial, d_gt0_mask);
-        cudaDeviceSynchronize();
-        k_serialize_delta_all<<<game_max_sessions, 1>>>(
+        k_collide_food_and_compact_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(s, food_spatial, d_gt0_mask);
+        k_serialize_delta_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
             s, d_gt0_mask, s.plain_delta_all, s.plain_delta_sizes_all);
-        k_serialize_termination_all<<<game_max_sessions, 1>>>(
+        k_serialize_termination_all<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
             s, d_gt0_mask, s.plain_termination_all, s.plain_termination_sizes_all);
-        cudaDeviceSynchronize();
     }
 
-    *s.tick_flags = 0;
-    k_plan_emit_and_tick_masks<<<sid_blocks, sid_threads>>>(
+    cudaMemsetAsync(s.tick_flags, 0, sizeof(unsigned), gpu_stream_of(s));
+    k_plan_emit_and_tick_masks<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
         s,
         d_active_mask,
         d_lobby_emit_mask,
@@ -1078,51 +1151,49 @@ void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
         d_term_emit_mask,
         d_tick_inc_mask,
         s.tick_flags);
-    cudaDeviceSynchronize();
+    cudaMemcpyAsync(s.host_tick_flags, s.tick_flags, sizeof(unsigned), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaStreamSynchronize(gpu_stream_of(s));
+    const unsigned plan_flags = *s.host_tick_flags;
 
-    const bool any_lobby_emit = (*s.tick_flags & kTickFlagAnyLobbyEmit) != 0;
-    const bool any_tick0_snapshot_emit = (*s.tick_flags & kTickFlagAnyTick0SnapshotEmit) != 0;
-    const bool any_delta_emit = (*s.tick_flags & kTickFlagAnyDeltaEmit) != 0;
-    const bool any_term_emit = (*s.tick_flags & kTickFlagAnyTermEmit) != 0;
+    const bool any_lobby_emit = (plan_flags & kTickFlagAnyLobbyEmit) != 0;
+    const bool any_tick0_snapshot_emit = (plan_flags & kTickFlagAnyTick0SnapshotEmit) != 0;
+    const bool any_delta_emit = (plan_flags & kTickFlagAnyDeltaEmit) != 0;
+    const bool any_term_emit = (plan_flags & kTickFlagAnyTermEmit) != 0;
 
     constexpr unsigned human_blocks = (game_max_players + threads - 1) / threads;
     if (any_lobby_emit) {
-        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads>>>(
+        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(
             s, d_lobby_emit_mask,
             s.plain_lobby_all, s.plain_lobby_sizes_all, lobby_status_max_text_size,
             s.plain_lobby_all, s.plain_lobby_sizes_all, lobby_status_max_text_size,
             false, true);
-        cudaDeviceSynchronize();
     }
     if (any_tick0_snapshot_emit) {
-        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads>>>(
+        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(
             s, d_tick0_snapshot_emit_mask,
             s.plain_snapshot_all, s.plain_snapshot_sizes_all, snapshot_packet_max_text_size,
             s.plain_snapshot_all, s.plain_snapshot_sizes_all, snapshot_packet_max_text_size,
             false, false);
-        cudaDeviceSynchronize();
     }
     if (any_delta_emit) {
-        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads>>>(
+        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(
             s, d_delta_emit_mask,
             s.plain_delta_all, s.plain_delta_sizes_all, delta_packet_max_text_size,
             s.plain_snapshot_all, s.plain_snapshot_sizes_all, snapshot_packet_max_text_size,
             true, false);
-        cudaDeviceSynchronize();
     }
     if (any_term_emit) {
-        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads>>>(
+        k_emit_masked<<<dim3(human_blocks, game_max_sessions), threads, 0, gpu_stream_of(s)>>>(
             s, d_term_emit_mask,
             s.plain_termination_all, s.plain_termination_sizes_all, termination_max_text_size,
             s.plain_termination_all, s.plain_termination_sizes_all, termination_max_text_size,
             false, false);
-        cudaDeviceSynchronize();
     }
 
-    k_apply_tick_decisions<<<sid_blocks, sid_threads>>>(
+    k_apply_tick_decisions<<<sid_blocks, sid_threads, 0, gpu_stream_of(s)>>>(
         s,
         d_active_mask,
         d_term_emit_mask,
         d_tick_inc_mask);
-    cudaDeviceSynchronize();
+    finalize_tick_host_visible(s);
 }

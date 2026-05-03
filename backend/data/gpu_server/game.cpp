@@ -61,11 +61,13 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
             continue;
         }
         gpu::ingest_packet_gpu(impl_.gpu_state, buffer, static_cast<size_t>(recv_len));
-        if (*impl_.gpu_state.ingress_ok) {
-            const id_t session_id = *impl_.gpu_state.ingress_session_id;
-            const id_t player_id = *impl_.gpu_state.ingress_player_id;
+        if (impl_.gpu_state.host_ingress->ok) {
+            const id_t session_id = impl_.gpu_state.host_ingress->session_id;
+            const id_t player_id = impl_.gpu_state.host_ingress->player_id;
             cudaMemcpyAsync(impl_.gpu_state.client_addrs + gpu::client_index(session_id, player_id) * sizeof(sockaddr_storage),
-                &client_addr, sizeof(sockaddr_storage), cudaMemcpyHostToDevice);
+                &client_addr, sizeof(sockaddr_storage), cudaMemcpyHostToDevice,
+                reinterpret_cast<cudaStream_t>(impl_.gpu_state.stream));
+            cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(impl_.gpu_state.stream));
         }
     }
 }
@@ -74,20 +76,25 @@ void game::tick(std::stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
     gpu::tick_active_sessions_gpu(impl_.gpu_state);
 
-    const unsigned send_count = *impl_.gpu_state.send_descs_size;
+    const unsigned send_count = *impl_.gpu_state.host_send_descs_size;
     for (unsigned j = 0; j < send_count; ++j) {
-        const gpu::send_desc& desc = impl_.gpu_state.send_descs[j];
-        const std::span bytes(impl_.gpu_state.packet_ring + desc.ring_offset, desc.bytes_size);
-        sockaddr_storage addr;
-        cudaMemcpyAsync(&addr,
+        const gpu::send_desc& desc = impl_.gpu_state.host_send_descs[j];
+        cudaMemcpy(impl_.gpu_state.host_packet_copy,
+            impl_.gpu_state.packet_ring + desc.ring_offset,
+            desc.bytes_size,
+            cudaMemcpyDeviceToHost);
+        const std::span bytes(impl_.gpu_state.host_packet_copy, desc.bytes_size);
+        sockaddr_storage addr{};
+        cudaMemcpy(&addr,
             impl_.gpu_state.client_addrs + gpu::client_index(desc.session_id, desc.player_id) * sizeof(sockaddr_storage),
-            sizeof(sockaddr_storage), cudaMemcpyDeviceToHost);
+            sizeof(sockaddr_storage),
+            cudaMemcpyDeviceToHost);
         sendto(sock, bytes, addr);
     }
 
     for (id_t i = 0; i < game_max_sessions; ++i) {
         if (!sm_[i]) continue;
-        if (!impl_.gpu_state.sessions[i].active) {
+        if (!impl_.gpu_state.host_session_active[i]) {
             sm_.deallocate(i);
             logger::debug("Session {} ended", i);
         }

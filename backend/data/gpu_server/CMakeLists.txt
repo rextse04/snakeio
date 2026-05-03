@@ -10,7 +10,7 @@ add_library(gpu_server_spatial_set_test_lib STATIC tests/spatial_set.cu)
 register_test(spatial_set)
 
 add_library(gpu_server_game_test_lib STATIC tests/game.cpp)
-target_link_libraries(gpu_server_game_test_lib PRIVATE gpu_server_lib)
+target_link_libraries(gpu_server_game_test_lib PRIVATE gpu_server_lib CUDA::cudart)
 register_test(game)
 
 add_library(gpu_server_packet_io_gpu_test_lib INTERFACE)
