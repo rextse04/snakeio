@@ -15,8 +15,6 @@
 
 using namespace snakeio;
 
-game game_;
-
 namespace {
     [[nodiscard]] int open_port(std::string_view name, const sockaddr_in6& addr) {
         const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
@@ -38,7 +36,7 @@ namespace {
         return sock;
     }
 
-    void control_port(std::stop_source stop_source, int sock) {
+    void control_port(game& game, std::stop_source stop_source, int sock) {
         std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
         sockaddr_storage client_addr{};
         while (true) {
@@ -77,7 +75,7 @@ namespace {
                     // 2. storage is given by an array of unsigned char
                     // 3. key_t is an array of std::byte, which is guaranteed to have an alignment of 1
                     const auto keys = std::launder(reinterpret_cast<const snakeio::key_t*>(buffer + header_size));
-                    const auto id = game_.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
+                    const auto id = game.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
                     if (id.has_value()) {
                         logger::debug("Session token {} mapped to session ID {}.", token, id.value());
                         buffer[6] = std::byte(0);
@@ -123,18 +121,18 @@ namespace {
         }
     }
 
-    void data_port(std::stop_token stop_token, int sock) {
-        game_.port(std::move(stop_token), sock);
+    void data_port(game& game, std::stop_token stop_token, int sock) {
+        game.port(std::move(stop_token), sock);
     }
 
-    void game_loop(std::stop_token stop_token, int sock) noexcept {
+    void game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
         auto next_tick = game::clock::now();
         while (!stop_token.stop_requested()) {
             {
 #ifdef SNAKEIO_BENCHMARK
                 benchmarker bencher(game_.tick_bench, game_.session_manager().in_use_size());
 #endif
-                game_.tick(std::move(stop_token), sock);
+                game.tick(std::move(stop_token), sock);
             }
             next_tick += game_tick_rate;
             std::this_thread::sleep_until(next_tick);
@@ -158,8 +156,10 @@ int main() {
     }
     constexpr timeval data_read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
     setsockopt(data_sock, SOL_SOCKET, SO_RCVTIMEO, &data_read_timeout, sizeof(data_read_timeout));
+
+    game game;
     std::stop_source stop_source;
-    std::jthread control_thread(control_port, stop_source, control_sock),
-        data_thread(data_port, stop_source.get_token(), data_sock),
-        game_thread(game_loop, stop_source.get_token(), data_sock);
+    std::jthread control_thread(control_port, std::ref(game), stop_source, control_sock),
+        data_thread(data_port, std::ref(game), stop_source.get_token(), data_sock),
+        game_thread(game_loop, std::ref(game), stop_source.get_token(), data_sock);
 }

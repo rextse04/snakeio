@@ -21,8 +21,10 @@ game::game() :
     new(memory_.get()) impl;
 }
 
+game::~game() noexcept = default;
+
 void game::add_session(id_t session_id,
-    id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
+                       id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     using enum add_session_error;
     impl& impl_ = get_impl();
     auto& rng = impl_.add_session_rng_;

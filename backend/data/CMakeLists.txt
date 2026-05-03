@@ -16,6 +16,31 @@ if (CMAKE_CUDA_COMPILER)
     include_directories(cccl/thrust)
     include_directories(cccl/libcudacxx/include)
     include_directories(cccl/cub)
+
+    option(SNAKEIO_ENABLE_DOCA_GPUNETIO_SERVER "Build the DOCA GPUNetIO backend" ON)
+    if (SNAKEIO_ENABLE_DOCA_GPUNETIO_SERVER)
+        find_path(SNAKEIO_DOCA_INCLUDE_DIR
+                NAMES doca_gpunetio.h
+                PATHS /opt/mellanox/doca/include)
+        find_library(SNAKEIO_DOCA_GPUNETIO_LIB
+                NAMES doca_gpunetio
+                PATHS /opt/mellanox/doca/lib/x86_64-linux-gnu)
+        find_library(SNAKEIO_DOCA_COMMON_LIB
+                NAMES doca_common
+                PATHS /opt/mellanox/doca/lib/x86_64-linux-gnu)
+        find_library(SNAKEIO_DOCA_ETH_LIB
+                NAMES doca_eth
+                PATHS /opt/mellanox/doca/lib/x86_64-linux-gnu)
+        if (NOT SNAKEIO_DOCA_INCLUDE_DIR OR
+            NOT SNAKEIO_DOCA_GPUNETIO_LIB OR
+            NOT SNAKEIO_DOCA_COMMON_LIB OR
+            NOT SNAKEIO_DOCA_ETH_LIB)
+            message(FATAL_ERROR
+                    "SNAKEIO_ENABLE_DOCA_GPUNETIO_SERVER=ON, but required DOCA headers/libraries were not found."
+                    " Expected doca_gpunetio.h and libs: doca_gpunetio, doca_common, doca_eth.")
+        endif()
+        include_directories(${SNAKEIO_DOCA_INCLUDE_DIR})
+    endif()
 endif()
 
 include_directories(.)
@@ -31,4 +56,7 @@ endfunction()
 add_server(cpu_server)
 if (CMAKE_CUDA_COMPILER)
     add_server(gpu_server)
+    if (SNAKEIO_ENABLE_DOCA_GPUNETIO_SERVER)
+        add_server(doca_gpunetio_server)
+    endif()
 endif()

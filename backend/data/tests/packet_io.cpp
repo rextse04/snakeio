@@ -16,8 +16,6 @@
 // - encrypted ingress datagrams into `game::port`
 // - encrypted egress datagrams produced by `game::tick`
 // - payload verification by decrypting received packets on the client side
-//
-// Note: main.cpp must run concurrently with this test.
 
 namespace {
 namespace sio = snakeio;
@@ -48,8 +46,8 @@ struct udp_runtime {
     }
 
     udp_runtime() {
-        game_sock = ::socket(AF_INET6, SOCK_DGRAM, 0);
-        client_sock = ::socket(AF_INET6, SOCK_DGRAM, 0);
+        game_sock = socket(AF_INET6, SOCK_DGRAM, 0);
+        client_sock = socket(AF_INET6, SOCK_DGRAM, 0);
         BOOST_REQUIRE_NE(game_sock, -1);
         BOOST_REQUIRE_NE(client_sock, -1);
         set_recv_timeout_ms(game_sock, 50);
@@ -65,8 +63,8 @@ struct udp_runtime {
         if (port_thread.joinable()) {
             port_thread.request_stop();
         }
-        if (game_sock != -1) ::close(game_sock);
-        if (client_sock != -1) ::close(client_sock);
+        if (game_sock != -1) close(game_sock);
+        if (client_sock != -1) close(client_sock);
     }
 };
 
@@ -101,7 +99,7 @@ make_ingress_packet(const sio::key_t& key, sio::id_t session_id, sio::id_t playe
 }
 
 void send_packet(int sock, const sockaddr_in6& addr, std::span<const std::byte> bytes) {
-    const auto sent = ::sendto(sock, bytes.data(), bytes.size(), 0,
+    const auto sent = sendto(sock, bytes.data(), bytes.size(), 0,
         reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
     BOOST_REQUIRE_EQUAL(sent, static_cast<ssize_t>(bytes.size()));
 }
@@ -110,7 +108,7 @@ std::vector<std::vector<std::byte>> recv_packets(int sock) {
     std::vector<std::vector<std::byte>> out;
     std::array<std::byte, sio::out_packet_max_text_size + sio::data_packet::header_size> buf{};
     while (true) {
-        const ssize_t n = ::recvfrom(sock, buf.data(), buf.size(), 0, nullptr, nullptr);
+        const ssize_t n = recvfrom(sock, buf.data(), buf.size(), 0, nullptr, nullptr);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             BOOST_REQUIRE_GE(n, 0);
