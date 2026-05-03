@@ -18,17 +18,6 @@
     #error "Unsupported platform. Link with a library that provides POSIX sockets API and include the headers in this file."
 #endif
 
-namespace snakeio {
-    inline ssize_t sendto(int sock, std::span<std::byte> buffer, const sockaddr_storage& addr) {
-        const ssize_t res = sendto(sock, buffer.data(), buffer.size(), 0,
-            reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_storage));
-        if (res == -1) [[unlikely]] {
-            logger::warn("sendto failed: {}.", std::strerror(errno));
-        }
-        return res;
-    }
-}
-
 template <>
 struct std::formatter<sockaddr_storage, char> {
     template <typename ParseContext>
@@ -48,3 +37,34 @@ struct std::formatter<sockaddr_storage, char> {
         }
     }
 };
+
+namespace snakeio {
+    [[nodiscard]] inline int open_port(std::string_view name, const sockaddr_in6& addr) {
+        const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            logger::error("Failed to create {} socket.", name);
+            return sock;
+        }
+        constexpr int off = 0;
+        if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
+            logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
+        }
+        if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
+            logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
+            return -1;
+        }
+        sockaddr_storage addr_storage{};
+        std::memcpy(&addr_storage, &addr, sizeof(addr));
+        logger::info("{} port listening on {}.", name, addr_storage);
+        return sock;
+    }
+
+    inline ssize_t sendto(int sock, std::span<std::byte> buffer, const sockaddr_storage& addr) {
+        const ssize_t res = sendto(sock, buffer.data(), buffer.size(), 0,
+            reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_storage));
+        if (res == -1) [[unlikely]] {
+            logger::warn("sendto failed: {}.", std::strerror(errno));
+        }
+        return res;
+    }
+}

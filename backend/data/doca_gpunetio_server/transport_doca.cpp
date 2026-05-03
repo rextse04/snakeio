@@ -2,6 +2,7 @@
 #include "doca_gpunetio_runtime.hpp"
 
 #include <doca_error.h>
+#include <logger.hpp>
 
 #include <cuda_runtime.h>
 #include <vector>
@@ -62,25 +63,51 @@ namespace snakeio::doca_transport {
             cudaMemcpyDeviceToHost);
     }
 
-    ssize_t send_egress_packet(int sock,
+    ssize_t send_egress_packet(
         std::span<std::byte> bytes_gpu,
         snakeio::size_t nbytes,
         const sockaddr_storage& client_addr,
         const std::array<std::byte, 6>& client_eth) noexcept {
-        const ssize_t fast = doca_gpunetio_runtime::send_udp_datagram_gpu(
+        return doca_gpunetio_runtime::send_udp_datagram_gpu(
             bytes_gpu.data(), nbytes, client_addr, client_eth.data());
-        if (fast >= 0) {
-            return fast;
+    }
+
+    void emit_tick_egress_batch(void* game_cuda_stream,
+        gpu::device_state& state,
+        const std::byte* client_eth_dev) noexcept {
+        if (state.client_addrs == nullptr) {
+            return;
         }
-        logger::debug("DOCA GPUNetIO failed to send UDP datagram, falling back to sendto.");
-        std::vector<std::byte> host(static_cast<std::size_t>(nbytes));
-        if (nbytes != 0) {
-            const cudaError_t e = cudaMemcpy(host.data(), bytes_gpu.data(), static_cast<std::size_t>(nbytes),
-                cudaMemcpyDeviceToHost);
-            if (e != cudaSuccess) {
-                return -1;
+        if (doca_gpunetio_runtime::emit_tick_egress_on_stream(game_cuda_stream, state, client_eth_dev)) {
+            return;
+        }
+
+        logger::warn("DOCA batched GPU egress failed; falling back to per-packet host sends.");
+        if (state.cuda_device_id >= 0) {
+            cudaSetDevice(state.cuda_device_id);
+        }
+        unsigned n = 0;
+        if (cudaMemcpy(&n, state.send_descs_size, sizeof(unsigned), cudaMemcpyDeviceToHost) != cudaSuccess) {
+            return;
+        }
+        if (n > state.send_descs_capacity) {
+            return;
+        }
+        if (n > 0 &&
+            cudaMemcpy(state.host_send_descs, state.send_descs, sizeof(gpu::send_desc) * n, cudaMemcpyDeviceToHost) !=
+                cudaSuccess) {
+            return;
+        }
+        for (unsigned j = 0; j < n; ++j) {
+            const gpu::send_desc& desc = state.host_send_descs[j];
+            const snakeio::size_t nbytes = static_cast<snakeio::size_t>(desc.bytes_size);
+            const std::span<std::byte> bytes(state.packet_ring + desc.ring_offset, nbytes);
+            const sockaddr_storage addr = load_client_addr(state, desc.session_id, desc.player_id);
+            std::array<std::byte, 6> client_eth{};
+            if (client_eth_dev != nullptr) {
+                load_client_eth(client_eth_dev, desc.session_id, desc.player_id, client_eth);
             }
+            send_egress_packet(bytes, nbytes, addr, client_eth);
         }
-        return sendto(sock, std::span(host.data(), static_cast<std::size_t>(nbytes)), client_addr);
     }
 }

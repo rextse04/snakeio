@@ -841,7 +841,7 @@ namespace {
         }
     }
 
-    __host__ void finalize_tick_host_visible(snakeio::gpu::device_state& s) noexcept {
+    __host__ void finalize_tick_host_visible_full(snakeio::gpu::device_state& s) noexcept {
         k_pack_session_active<<<kSidBlocks, kSidThreads, 0, gpu_stream_of(s)>>>(s);
         cudaMemcpyAsync(s.host_send_descs_size, s.send_descs_size, sizeof(unsigned),
             cudaMemcpyDeviceToHost, gpu_stream_of(s));
@@ -858,6 +858,21 @@ namespace {
             sizeof(bool) * snakeio::game_max_sessions, cudaMemcpyDeviceToHost, gpu_stream_of(s));
         cudaStreamSynchronize(gpu_stream_of(s));
     }
+
+    __host__ void finalize_tick_host_visible_sessions_only(snakeio::gpu::device_state& s) noexcept {
+        k_pack_session_active<<<kSidBlocks, kSidThreads, 0, gpu_stream_of(s)>>>(s);
+        cudaMemcpyAsync(s.host_session_active, s.session_active_flags,
+            sizeof(bool) * snakeio::game_max_sessions, cudaMemcpyDeviceToHost, gpu_stream_of(s));
+        cudaStreamSynchronize(gpu_stream_of(s));
+    }
+
+    __host__ void apply_tick_host_finalize(snakeio::gpu::device_state& s, snakeio::gpu::tick_host_finalize m) noexcept {
+        if (m == snakeio::gpu::tick_host_finalize::sessions_only) {
+            finalize_tick_host_visible_sessions_only(s);
+        } else {
+            finalize_tick_host_visible_full(s);
+        }
+    }
 }
 
 void snakeio::gpu::init_device_state(device_state& s) {
@@ -873,6 +888,14 @@ void snakeio::gpu::init_device_state(device_state& s) {
         throw std::runtime_error("Unable to create CUDA stream for GPU device state.");
     }
     s.stream = reinterpret_cast<void*>(gpu_stream);
+
+    int cuda_dev = 0;
+    if (cudaGetDevice(&cuda_dev) != cudaSuccess) {
+        cudaStreamDestroy(gpu_stream);
+        s.stream = nullptr;
+        throw std::runtime_error("Unable to query CUDA device for GPU device state.");
+    }
+    s.cuda_device_id = cuda_dev;
 
     cudaHostAlloc(reinterpret_cast<void**>(&s.host_ingress), sizeof(device_state::ingress_host_copy), cudaHostAllocPortable);
     cudaHostAlloc(reinterpret_cast<void**>(&s.host_tick_flags), sizeof(unsigned), cudaHostAllocPortable);
@@ -1062,7 +1085,7 @@ void snakeio::gpu::destroy_client_addrs_gpu(device_state& s) noexcept {
 }
 
 
-void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
+void snakeio::gpu::tick_active_sessions_gpu(device_state& s, tick_host_finalize host_finalize) noexcept {
     cudaMemsetAsync(s.packet_ring_head, 0, sizeof(unsigned), gpu_stream_of(s));
     cudaMemsetAsync(s.send_descs_size, 0, sizeof(unsigned), gpu_stream_of(s));
 
@@ -1093,7 +1116,7 @@ void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
     const bool any_active = (build_flags & kTickFlagAnyActive) != 0;
     const bool any_gt0 = (build_flags & kTickFlagAnyGt0) != 0;
     if (!any_active) {
-        finalize_tick_host_visible(s);
+        apply_tick_host_finalize(s, host_finalize);
         return;
     }
 
@@ -1195,5 +1218,5 @@ void snakeio::gpu::tick_active_sessions_gpu(device_state& s) noexcept {
         d_active_mask,
         d_term_emit_mask,
         d_tick_inc_mask);
-    finalize_tick_host_visible(s);
+    apply_tick_host_finalize(s, host_finalize);
 }

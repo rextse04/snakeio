@@ -83,6 +83,7 @@ endif()
 include_directories(.)
 find_package(Boost REQUIRED COMPONENTS unit_test_framework)
 find_package(ZLIB REQUIRED)
+add_subdirectory(cpu_open_data_port)
 add_subdirectory(tests)
 add_subdirectory(crypt)
 

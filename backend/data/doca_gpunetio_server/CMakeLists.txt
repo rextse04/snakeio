@@ -1,7 +1,7 @@
 add_library(doca_tx_frame_lib STATIC doca_tx_frame.cpp)
 target_include_directories(doca_tx_frame_lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-add_library(doca_gpunetio_server_lib STATIC game.cpp transport_doca.cpp doca_gpunetio_runtime.cpp doca_gpunetio_recv.cu doca_gpunetio_send.cu)
+add_library(doca_gpunetio_server_lib STATIC game.cpp transport_doca.cpp doca_gpunetio_runtime.cpp doca_gpunetio_recv.cu doca_gpunetio_send.cu doca_gpunetio_egress.cu)
 target_compile_definitions(doca_gpunetio_server_lib PRIVATE ALLOW_EXPERIMENTAL_API)
 target_include_directories(doca_gpunetio_server_lib PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 target_link_libraries(doca_gpunetio_server_lib

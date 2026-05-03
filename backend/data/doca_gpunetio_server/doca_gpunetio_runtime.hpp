@@ -2,6 +2,7 @@
 
 #include <doca_error.h>
 #include <config.hpp>
+#include <gpu_server/game_kernels.cuh>
 #include <array>
 #include <span>
 #include <stop_token>
@@ -34,4 +35,10 @@ namespace snakeio::doca_gpunetio_runtime {
         snakeio::size_t payload_len,
         const sockaddr_storage& dst,
         const std::byte dst_eth[6]) noexcept;
+
+    // Batched egress: one GPU kernel walks device `send_descs` and submits GPUNetIO TX on `game_cuda_stream`.
+    // Call after `tick_active_sessions_gpu(..., tick_host_finalize::sessions_only)` on the same stream.
+    bool emit_tick_egress_on_stream(void* game_cuda_stream,
+        const gpu::device_state& state,
+        const std::byte* client_eth_dev) noexcept;
 }

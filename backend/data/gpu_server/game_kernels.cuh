@@ -7,6 +7,13 @@
 #include <cstdint>
 
 namespace snakeio::gpu {
+    // `full` copies send descriptors to host for CPU transports; `sessions_only` leaves them on device
+    // for DOCA batched GPU egress (see doca_gpunetio_runtime::emit_tick_egress_on_stream).
+    enum class tick_host_finalize : std::uint8_t {
+        full = 0,
+        sessions_only = 1,
+    };
+
     __host__ __device__ constexpr size_t client_index(id_t session_id, id_t player_id) noexcept {
         return static_cast<size_t>(session_id) * game_max_players + player_id;
     }
@@ -122,6 +129,8 @@ namespace snakeio::gpu {
 
         bool* session_active_flags;
         void* stream{};
+        // Device index used for `cudaMalloc` / `cudaStreamCreate` (set in init_device_state).
+        int cuda_device_id = -1;
 
         struct ingress_host_copy {
             bool ok;
@@ -148,5 +157,6 @@ namespace snakeio::gpu {
     void init_client_addrs_gpu(device_state& state, size_t bytes_size) noexcept;
     void destroy_client_addrs_gpu(device_state& state) noexcept;
 
-    void tick_active_sessions_gpu(device_state& state) noexcept;
+    void tick_active_sessions_gpu(device_state& state,
+        tick_host_finalize host_finalize = tick_host_finalize::full) noexcept;
 }

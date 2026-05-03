@@ -3,6 +3,7 @@ target_link_libraries(gpu_server_logic_lib PRIVATE crypt_gpu_lib)
 
 add_library(gpu_server_lib STATIC game.cpp)
 target_link_libraries(gpu_server_lib
+        PRIVATE cpu_open_data_port_lib
         PRIVATE CUDA::cudart
         PRIVATE gpu_server_logic_lib)
 
@@ -13,8 +14,8 @@ add_library(gpu_server_game_test_lib STATIC tests/game.cpp)
 target_link_libraries(gpu_server_game_test_lib PRIVATE gpu_server_lib CUDA::cudart)
 register_test(game)
 
-add_library(gpu_server_packet_io_gpu_test_lib INTERFACE)
-target_link_libraries(gpu_server_packet_io_gpu_test_lib INTERFACE
+add_library(gpu_server_packet_io_test_lib INTERFACE)
+target_link_libraries(gpu_server_packet_io_test_lib INTERFACE
     gpu_server_lib
     crypt_packet_host_lib)
-register_test(packet_io gpu)
+register_test(packet_io)

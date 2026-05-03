@@ -28,6 +28,7 @@
 #include <cstring>
 #include <endian.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <thread>
 #include <unistd.h>
@@ -37,6 +38,25 @@ extern "C" cudaError_t snakeio_doca_gpunetio_tx_send_one_launch(cudaStream_t str
     uint8_t* pkt_gpu,
     uint32_t mkey_be,
     uint32_t frame_len);
+
+extern "C" cudaError_t snakeio_doca_gpunetio_emit_tick_egress_launch(cudaStream_t stream,
+    struct doca_gpu_eth_txq* txq_gpu,
+    uint8_t* pkt_gpu,
+    uint32_t mkey_be,
+    const snakeio::gpu::send_desc* descs_dev,
+    unsigned n,
+    const std::byte* packet_ring,
+    std::size_t packet_ring_capacity,
+    const std::byte* client_addrs,
+    unsigned sockaddr_storage_bytes,
+    const std::byte* client_eth_dev,
+    const uint8_t* nic_mac,
+    const uint8_t* local_ip4,
+    const uint8_t* local_ip6,
+    int has_local_ip6,
+    const uint8_t* gateway_mac,
+    int has_gateway_mac,
+    uint16_t src_udp_port_be);
 
 namespace {
     constexpr uint32_t max_pkt_num = 8192;
@@ -879,12 +899,12 @@ namespace snakeio::doca_gpunetio_runtime {
 
         cudaError_t cr = cudaFree(0);
         if (cr != cudaSuccess) {
-            snakeio::logger::warn("cudaFree(0) failed during DOCA init: {}.", cudaGetErrorString(cr));
+            logger::warn("cudaFree(0) failed during DOCA init: {}.", cudaGetErrorString(cr));
         }
 
         doca_error_t res = init_doca_flow();
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("doca_flow_init failed: {}.", doca_error_get_descr(res));
+            logger::error("doca_flow_init failed: {}.", doca_error_get_descr(res));
             return res;
         }
 
@@ -895,14 +915,14 @@ namespace snakeio::doca_gpunetio_runtime {
             res = open_first_nic(&g_rx.nic);
         }
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("Failed to open DOCA NIC device: {}.", doca_error_get_descr(res));
+            logger::error("Failed to open DOCA NIC device: {}.", doca_error_get_descr(res));
             destroy_flow_framework();
             return res;
         }
 
         res = start_doca_flow_port(g_rx.nic);
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("doca_flow_port_start failed: {} ({}).",
+            logger::error("doca_flow_port_start failed: {} ({}).",
                 doca_error_get_descr(res),
                 doca_error_get_name(res));
             doca_dev_close(g_rx.nic);
@@ -914,7 +934,7 @@ namespace snakeio::doca_gpunetio_runtime {
         const char* gpu_pci = env_cstr("SNAKEIO_DOCA_GPU_PCI", "0000:ab:00.0");
         res = doca_gpu_create(gpu_pci, &g_rx.gpu);
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("doca_gpu_create failed: {}.", doca_error_get_descr(res));
+            logger::error("doca_gpu_create failed: {}.", doca_error_get_descr(res));
             doca_flow_port_stop(g_flow.port);
             g_flow.port = nullptr;
             doca_dev_close(g_rx.nic);
@@ -925,7 +945,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         res = create_rxq(g_rx.gpu, g_rx.nic);
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("DOCA Eth RXQ setup failed: {}.", doca_error_get_descr(res));
+            logger::error("DOCA Eth RXQ setup failed: {}.", doca_error_get_descr(res));
             destroy_rxq();
             destroy_flow_framework();
             return res;
@@ -933,7 +953,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         res = create_txq();
         if (res != DOCA_SUCCESS) {
-            snakeio::logger::error("DOCA Eth TXQ setup failed: {}.", doca_error_get_descr(res));
+            logger::error("DOCA Eth TXQ setup failed: {}.", doca_error_get_descr(res));
             destroy_rxq();
             destroy_flow_framework();
             return res;
@@ -941,7 +961,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         const cudaError_t cs = cudaStreamCreateWithFlags(&g_stream, cudaStreamNonBlocking);
         if (cs != cudaSuccess) {
-            snakeio::logger::error("cudaStreamCreateWithFlags failed: {}.", cudaGetErrorString(cs));
+            logger::error("cudaStreamCreateWithFlags failed: {}.", cudaGetErrorString(cs));
             destroy_txq();
             destroy_rxq();
             destroy_flow_framework();
@@ -955,7 +975,7 @@ namespace snakeio::doca_gpunetio_runtime {
             &g_stage_gpu,
             reinterpret_cast<void**>(&g_stage_cpu));
         if (res != DOCA_SUCCESS || g_stage_cpu == nullptr) {
-            snakeio::logger::error("doca_gpu_mem_alloc(stage) failed: {}.", doca_error_get_descr(res));
+            logger::error("doca_gpu_mem_alloc(stage) failed: {}.", doca_error_get_descr(res));
             cudaStreamDestroy(g_stream);
             g_stream = {};
             destroy_txq();
@@ -1025,7 +1045,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         const cudaError_t lr = snakeio_doca_gpunetio_recv_launch(stream, g_rx.eth_rxq_gpu, g_stage_cpu);
         if (lr != cudaSuccess) {
-            snakeio::logger::error("snakeio_doca_gpunetio_recv_launch failed: {}.", cudaGetErrorString(lr));
+            logger::error("snakeio_doca_gpunetio_recv_launch failed: {}.", cudaGetErrorString(lr));
             return DOCA_ERROR_DRIVER;
         }
 
@@ -1046,7 +1066,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         cudaError_t sync = cudaStreamSynchronize(stream);
         if (sync != cudaSuccess) {
-            snakeio::logger::warn("cudaStreamSynchronize(recv) failed: {}.", cudaGetErrorString(sync));
+            logger::warn("cudaStreamSynchronize(recv) failed: {}.", cudaGetErrorString(sync));
         }
 
         g_started = false;
@@ -1071,7 +1091,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
     bool pop_udp_payload(std::stop_token stop_token,
         std::span<std::byte> out_payload,
-        snakeio::size_t& out_payload_len,
+        size_t& out_payload_len,
         sockaddr_storage& out_src_addr,
         std::array<std::byte, 6>& out_src_eth) noexcept {
         if (!g_inited || !g_started || g_stage_cpu == nullptr) {
@@ -1083,7 +1103,7 @@ namespace snakeio::doca_gpunetio_runtime {
             doca_eth_rxq_gpu_cpu_proxy_progress(g_rx.eth_rxq);
 
             if (g_stage_cpu->gpu_sem == DOCA_GPU_SEMAPHORE_STATUS_ERROR) {
-                snakeio::logger::warn("GPUNetIO receive kernel reported an error; stopping data port.");
+                logger::warn("GPUNetIO receive kernel reported an error; stopping data port.");
                 out_payload_len = 0;
                 return false;
             }
@@ -1101,11 +1121,11 @@ namespace snakeio::doca_gpunetio_runtime {
                     out_src_eth[static_cast<std::size_t>(i)] = static_cast<std::byte>(g_stage_cpu->src_eth[i]);
                 }
                 if (n > out_payload.size()) {
-                    snakeio::logger::warn("Dropping oversize UDP payload ({} bytes > buffer {}).", n, out_payload.size());
+                    logger::warn("Dropping oversize UDP payload ({} bytes > buffer {}).", n, out_payload.size());
                     out_payload_len = 0;
                 } else {
                     std::memcpy(out_payload.data(), const_cast<const std::byte*>(g_stage_cpu->payload), n);
-                    out_payload_len = static_cast<snakeio::size_t>(n);
+                    out_payload_len = static_cast<size_t>(n);
                 }
             }
 
@@ -1177,9 +1197,9 @@ namespace snakeio::doca_gpunetio_runtime {
     static ssize_t commit_tx_headers_and_payload(const uint8_t* hdr,
         unsigned hdr_len,
         const std::byte* payload_dev,
-        snakeio::size_t payload_len,
+        size_t payload_len,
         uint32_t total_frame_len,
-        snakeio::size_t return_payload_len) noexcept {
+        size_t return_payload_len) noexcept {
         if (static_cast<std::size_t>(hdr_len) + static_cast<std::size_t>(payload_len) > k_tx_pkt_buf_bytes) {
             return -1;
         }
@@ -1187,7 +1207,7 @@ namespace snakeio::doca_gpunetio_runtime {
         const cudaError_t h2d =
             cudaMemcpyAsync(g_tx.pkt_gpu, hdr, hdr_len, cudaMemcpyHostToDevice, g_stream);
         if (h2d != cudaSuccess) {
-            snakeio::logger::warn("send_udp_datagram_gpu: cudaMemcpyAsync HtoD (headers) failed: {}.",
+            logger::warn("send_udp_datagram_gpu: cudaMemcpyAsync HtoD (headers) failed: {}.",
                 cudaGetErrorString(h2d));
             return -1;
         }
@@ -1199,7 +1219,7 @@ namespace snakeio::doca_gpunetio_runtime {
                 cudaMemcpyDeviceToDevice,
                 g_stream);
             if (d2d != cudaSuccess) {
-                snakeio::logger::warn("send_udp_datagram_gpu: cudaMemcpyAsync DtoD (payload) failed: {}.",
+                logger::warn("send_udp_datagram_gpu: cudaMemcpyAsync DtoD (payload) failed: {}.",
                     cudaGetErrorString(d2d));
                 return -1;
             }
@@ -1208,13 +1228,13 @@ namespace snakeio::doca_gpunetio_runtime {
         const cudaError_t kl = snakeio_doca_gpunetio_tx_send_one_launch(
             g_stream, g_tx.eth_txq_gpu, g_tx.pkt_gpu, g_tx.mkey_be32, total_frame_len);
         if (kl != cudaSuccess) {
-            snakeio::logger::warn("snakeio_doca_gpunetio_tx_send_one_launch failed: {}.", cudaGetErrorString(kl));
+            logger::warn("snakeio_doca_gpunetio_tx_send_one_launch failed: {}.", cudaGetErrorString(kl));
             return -1;
         }
 
         const cudaError_t sy = cudaStreamSynchronize(g_stream);
         if (sy != cudaSuccess) {
-            snakeio::logger::warn("send_udp_datagram_gpu: cudaStreamSynchronize failed: {}.", cudaGetErrorString(sy));
+            logger::warn("send_udp_datagram_gpu: cudaStreamSynchronize failed: {}.", cudaGetErrorString(sy));
             return -1;
         }
 
@@ -1223,7 +1243,7 @@ namespace snakeio::doca_gpunetio_runtime {
     }
 
     ssize_t send_udp_datagram_gpu(const std::byte* payload_dev,
-        snakeio::size_t payload_len,
+        size_t payload_len,
         const sockaddr_storage& dst,
         const std::byte dst_eth[6]) noexcept {
         if (!g_inited || !g_tx.ready || g_stream == nullptr || g_tx.eth_txq_gpu == nullptr || g_tx.pkt_gpu == nullptr) {
@@ -1255,7 +1275,7 @@ namespace snakeio::doca_gpunetio_runtime {
 
         std::array<uint8_t, 64> hdr{};
         unsigned hdr_len = 0;
-        const uint16_t src_udp_port_be = htons(snakeio::data_plane_ext_port);
+        const uint16_t src_udp_port_be = htons(data_plane_ext_port);
 
         if (to_v4) {
             if (!doca_tx_frame::build_ipv4_udp(hdr,
@@ -1286,5 +1306,107 @@ namespace snakeio::doca_gpunetio_runtime {
         }
         const uint32_t total6 = static_cast<uint32_t>(hdr_len + payload_len);
         return commit_tx_headers_and_payload(hdr.data(), hdr_len, payload_dev, payload_len, total6, payload_len);
+    }
+
+    bool emit_tick_egress_on_stream(void* game_cuda_stream,
+        const gpu::device_state& st,
+        const std::byte* client_eth_dev) noexcept {
+        if (!g_inited || !g_tx.ready || game_cuda_stream == nullptr || g_tx.eth_txq_gpu == nullptr ||
+            g_tx.pkt_gpu == nullptr || st.client_addrs == nullptr || st.send_descs == nullptr ||
+            st.send_descs_size == nullptr || st.packet_ring == nullptr) {
+            return false;
+        }
+
+        if (st.cuda_device_id >= 0) {
+            const cudaError_t sd = cudaSetDevice(st.cuda_device_id);
+            if (sd != cudaSuccess) {
+                logger::warn("emit_tick_egress_on_stream: cudaSetDevice({}) failed: {}.",
+                    st.cuda_device_id,
+                    cudaGetErrorString(sd));
+                return false;
+            }
+        }
+
+        cudaStream_t gs = static_cast<cudaStream_t>(game_cuda_stream);
+
+        // Prefer a pinned staging word + D2H on `gs` (ordered with tick). Do not allocate at static
+        // init time: that can run before CUDA is initialized (DOCA init calls cudaFree(0) first).
+        static unsigned* pinned_send_n = nullptr;
+        static bool pinned_send_n_init_tried = false;
+        if (!pinned_send_n_init_tried) {
+            pinned_send_n_init_tried = true;
+            unsigned* p = nullptr;
+            if (cudaMallocHost(reinterpret_cast<void**>(&p), sizeof(unsigned)) == cudaSuccess) {
+                pinned_send_n = p;
+            } else {
+                logger::debug("emit_tick_egress_on_stream: cudaMallocHost(send_n) unavailable; using blocking D2H.");
+            }
+        }
+
+        unsigned n = 0;
+        if (pinned_send_n != nullptr) {
+            const cudaError_t cn =
+                cudaMemcpyAsync(pinned_send_n, st.send_descs_size, sizeof(unsigned), cudaMemcpyDeviceToHost, gs);
+            if (cn != cudaSuccess) {
+                logger::warn("emit_tick_egress_on_stream: cudaMemcpyAsync DtoH for send_descs_size failed: {}.",
+                    cudaGetErrorString(cn));
+                return false;
+            }
+            const cudaError_t sn = cudaStreamSynchronize(gs);
+            if (sn != cudaSuccess) {
+                logger::warn(
+                    "emit_tick_egress_on_stream: cudaStreamSynchronize after send_descs_size copy failed: {}.",
+                    cudaGetErrorString(sn));
+                return false;
+            }
+            n = *pinned_send_n;
+        } else {
+            // Tick already synchronized `gs`; blocking read is coherent without pinned memory.
+            const cudaError_t m =
+                cudaMemcpy(&n, st.send_descs_size, sizeof(unsigned), cudaMemcpyDeviceToHost);
+            if (m != cudaSuccess) {
+                logger::warn("emit_tick_egress_on_stream: cudaMemcpy DtoH for send_descs_size failed: {}.",
+                    cudaGetErrorString(m));
+                return false;
+            }
+        }
+        if (n > st.send_descs_capacity) {
+            logger::warn("emit_tick_egress_on_stream: send descriptor count overflow.");
+            return false;
+        }
+
+        const uint16_t src_udp = htons(data_plane_ext_port);
+        const cudaError_t lr = snakeio_doca_gpunetio_emit_tick_egress_launch(gs,
+            g_tx.eth_txq_gpu,
+            g_tx.pkt_gpu,
+            g_tx.mkey_be32,
+            st.send_descs,
+            n,
+            st.packet_ring,
+            st.packet_ring_capacity,
+            st.client_addrs,
+            static_cast<unsigned>(sizeof(sockaddr_storage)),
+            client_eth_dev,
+            g_tx.nic_mac,
+            g_tx.local_ip4,
+            g_tx.local_ip6,
+            g_tx.has_local_ip6 ? 1 : 0,
+            g_tx.gateway_mac,
+            g_tx.has_gateway_mac ? 1 : 0,
+            src_udp);
+        if (lr != cudaSuccess) {
+            logger::warn("emit_tick_egress_on_stream: kernel launch failed: {}.", cudaGetErrorString(lr));
+            return false;
+        }
+
+        const cudaError_t sy = cudaStreamSynchronize(gs);
+        if (sy != cudaSuccess) {
+            logger::warn("emit_tick_egress_on_stream: cudaStreamSynchronize failed: {}.",
+                cudaGetErrorString(sy));
+            return false;
+        }
+
+        doca_eth_txq_gpu_cpu_proxy_progress(g_tx.eth_txq);
+        return true;
     }
 }

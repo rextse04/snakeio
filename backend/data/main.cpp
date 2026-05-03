@@ -16,26 +16,6 @@
 using namespace snakeio;
 
 namespace {
-    [[nodiscard]] int open_port(std::string_view name, const sockaddr_in6& addr) {
-        const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            logger::error("Failed to create {} socket.", name);
-            return sock;
-        }
-        constexpr int off = 0;
-        if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
-            logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
-        }
-        if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-            logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
-            return -1;
-        }
-        sockaddr_storage addr_storage{};
-        std::memcpy(&addr_storage, &addr, sizeof(addr));
-        logger::info("{} port listening on {}.", name, addr_storage);
-        return sock;
-    }
-
     void control_port(game& game, std::stop_source stop_source, int sock) {
         std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
         sockaddr_storage client_addr{};
@@ -146,11 +126,7 @@ int main() {
         .sin6_port = htons(data_plane_int_port),
         .sin6_addr = in6addr_loopback
     });
-    const int data_sock = open_port("data", {
-        .sin6_family = AF_INET6,
-        .sin6_port = htons(data_plane_ext_port),
-        .sin6_addr = in6addr_any
-    });
+    const int data_sock = game::open_data_port();
     if (control_sock < 0 || data_sock < 0) {
         return EXIT_FAILURE;
     }
