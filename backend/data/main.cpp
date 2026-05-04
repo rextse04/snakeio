@@ -126,7 +126,11 @@ int main() {
         .sin6_port = htons(data_plane_int_port),
         .sin6_addr = in6addr_loopback
     });
-    const int data_sock = game::open_data_port();
+    const int data_sock = open_port("data", {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(data_plane_ext_port),
+        .sin6_addr = in6addr_any
+    });
     if (control_sock < 0 || data_sock < 0) {
         return EXIT_FAILURE;
     }
