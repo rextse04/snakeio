@@ -1,0 +1,1 @@
+add_library(cpu_open_data_port_lib STATIC open_data_port.cpp)
