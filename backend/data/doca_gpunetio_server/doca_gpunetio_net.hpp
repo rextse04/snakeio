@@ -41,7 +41,8 @@ public:
     struct doca_gpu_eth_txq* eth_txq_gpu() noexcept { return rxq_.eth_txq_gpu; }
 
     /// Kernel UDP socket bound to `data_plane_ext_port` for `sendto` when GPU Eth TX is off.
-    /// Opened before DOCA RSS rules so replies use a real stack socket; `game::open_data_port` may be a placeholder.
+    /// Opened before DOCA RSS rules so replies use a real stack socket when GPUNetIO is active.
+    /// `game::open_data_port()` returns a `/dev/null` placeholder then to avoid double-binding 50003.
     int kernel_egress_sock() const noexcept { return kernel_egress_sock_; }
 
 private:

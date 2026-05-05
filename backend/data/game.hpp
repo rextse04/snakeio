@@ -61,7 +61,7 @@ namespace snakeio {
             add_session(*session_id, human_players, ai_players, max_tick, keys);
             return *session_id;
         }
-        static int open_data_port() noexcept;
+        int open_data_port() noexcept;
         void port(std::stop_token stop_token, int sock) noexcept;
         void tick(std::stop_token stop_token, int sock) noexcept;
         template <typename Self>

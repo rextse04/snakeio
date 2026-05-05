@@ -42,12 +42,28 @@ void snakeio::doca_gpunetio::runtime::try_init_doca(snakeio::gpu::device_state& 
     if (doca_ready_)
         return;
     if (std::getenv("SNAKEIO_DOCA_GPUNETIO") == nullptr) {
-        logger::debug("DOCA GPUNetIO: disabled (set SNAKEIO_DOCA_GPUNETIO=1 to enable).");
+        logger::warn(
+            "DOCA GPUNetIO: SNAKEIO_DOCA_GPUNETIO not set — GPUNetIO dataplane disabled; use kernel UDP "
+            "(set SNAKEIO_DOCA_GPUNETIO=1 for DOCA RX when hardware is available).");
         return;
     }
     doca_ = std::make_unique<DocaGpuIngress>();
+    const char* nic_env = std::getenv("SNAKEIO_NIC_PCIE");
     const char* nic = env_or("SNAKEIO_NIC_PCIE", "0000:bd:00.0");
+    if (nic_env == nullptr || nic_env[0] == '\0') {
+        logger::warn(
+            "DOCA: SNAKEIO_NIC_PCIE not set — using default NIC PCIe address {} (set SNAKEIO_NIC_PCIE "
+            "when your NIC BDF differs).",
+            nic);
+    }
+    const char* gpu_env = std::getenv("SNAKEIO_GPU_PCIE");
     const char* gpu = env_or("SNAKEIO_GPU_PCIE", "0000:ab:00.0");
+    if (gpu_env == nullptr || gpu_env[0] == '\0') {
+        logger::warn(
+            "DOCA: SNAKEIO_GPU_PCIE not set — using default GPU PCIe address {} (set SNAKEIO_GPU_PCIE "
+            "when your GPU BDF differs).",
+            gpu);
+    }
     doca_error_t r = doca_->try_init(nic, gpu, gs.cuda_device_id, gs.packet_ring, gs.packet_ring_capacity);
     if (r == DOCA_SUCCESS) {
         doca_ready_ = true;
@@ -343,6 +359,13 @@ snakeio::size_t snakeio::doca_gpunetio::runtime::emit_egress_batch(
         }
         logger::warn("DOCA GPU egress failed ({}); falling back to sendto for this tick.",
             doca_error_get_descr(tr));
+    } else if (doca_active()) {
+        static bool warned_gpu_tx = false;
+        if (!warned_gpu_tx) {
+            warned_gpu_tx = true;
+            logger::warn(
+                "DOCA: GPU Eth TXQ not ready — using kernel sendto until GPU egress is initialized.");
+        }
     }
 
     cudaMemcpyAsync(gs.host_send_descs,

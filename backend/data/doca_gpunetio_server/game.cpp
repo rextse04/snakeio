@@ -56,17 +56,35 @@ void game::add_session(id_t session_id,
 }
 
 int game::open_data_port() noexcept {
-    // GPUNetIO ingress uses the GPU RXQ; no Linux UDP bind is required. Return a stable handle
-    // for APIs that expect a non-negative fd (ignored by `tick` when DOCA RX is active).
-    static int placeholder = -1;
-    if (placeholder < 0) {
-        placeholder = ::open("/dev/null", O_RDWR);
+    impl& impl_ = get_impl();
+    // After `game` construction, GPUNetIO may be active (`kernel_egress_sock_` binds 50003). Use a
+    // non-socket placeholder so `recvfrom`/SO_RCVTIMEO in `main` do not claim the data port twice.
+    if (impl_.runtime.doca_active()) {
+        static int placeholder = -1;
         if (placeholder < 0) {
-            logger::error("open_data_port: /dev/null: {}.", std::strerror(errno));
-            return -1;
+            placeholder = ::open("/dev/null", O_RDWR);
+            if (placeholder < 0) {
+                logger::error("open_data_port: /dev/null: {}.", std::strerror(errno));
+                return -1;
+            }
+        }
+        return placeholder;
+    }
+    {
+        static bool warned_kernel_data = false;
+        if (!warned_kernel_data) {
+            warned_kernel_data = true;
+            logger::warn(
+                "DOCA GPUNetIO inactive — binding kernel UDP data plane [::]:{} (ingress/egress use the "
+                "socket passed to ticks; configure DOCA NIC/GPU and SNAKEIO_DOCA_GPUNETIO for GPUNetIO RX).",
+                data_plane_ext_port);
         }
     }
-    return placeholder;
+    return open_port("data", {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(data_plane_ext_port),
+        .sin6_addr = in6addr_any,
+    });
 }
 
 void game::port(std::stop_token stop_token, int) noexcept {

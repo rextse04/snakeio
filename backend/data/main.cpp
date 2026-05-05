@@ -17,7 +17,8 @@ using namespace snakeio;
 
 namespace {
     void control_port(game& game, std::stop_source stop_source, int sock) {
-        std::byte buffer[1 + 5 + 1 + 1 + game_max_players * sizeof(snakeio::key_t)]{};
+        constexpr std::size_t ctl_new_session_pkt = 1 + 5 + 1 + 1 + 4 + game_max_players * sizeof(snakeio::key_t);
+        std::byte buffer[ctl_new_session_pkt]{};
         sockaddr_storage client_addr{};
         while (true) {
             socklen_t client_addr_len = sizeof(client_addr);
@@ -110,7 +111,7 @@ namespace {
         while (!stop_token.stop_requested()) {
             {
 #ifdef SNAKEIO_BENCHMARK
-                benchmarker bencher(game_.tick_bench, game_.session_manager().in_use_size());
+                benchmarker bencher(game.tick_bench, game.session_manager().in_use_size());
 #endif
                 game.tick(stop_token, sock);
             }
@@ -130,14 +131,13 @@ int main() {
         .sin6_addr = in6addr_loopback
 #endif
     });
-    const int data_sock = game::open_data_port();
+    game game;
+    const int data_sock = game.open_data_port();
     if (control_sock < 0 || data_sock < 0) [[unlikely]] {
         return EXIT_FAILURE;
     }
     constexpr timeval data_read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
     setsockopt(data_sock, SOL_SOCKET, SO_RCVTIMEO, &data_read_timeout, sizeof(data_read_timeout));
-
-    game game;
     std::stop_source stop_source;
     std::jthread control_thread(control_port, std::ref(game), stop_source, control_sock),
         data_thread(data_port, std::ref(game), stop_source.get_token(), data_sock),

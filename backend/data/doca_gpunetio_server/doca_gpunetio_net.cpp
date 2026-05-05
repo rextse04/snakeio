@@ -123,6 +123,16 @@ static int open_kernel_udp_for_doca_sendto() noexcept
         std::memcpy(&sin6.sin6_addr.s6_addr[12], &v4.s_addr, sizeof(v4.s_addr));
         return snakeio::open_port("doca-sendto", sin6);
     }
+    {
+        static bool warned_bind = false;
+        if (!warned_bind) {
+            warned_bind = true;
+            snakeio::logger::warn(
+                "DOCA egress: SNAKEIO_DATA_PLANE_BIND_IPV4 and SNAKEIO_DOCA_PACKET_IO_DST unset — binding "
+                "kernel sendto to [::]:{} (dual-stack any). Set one of these for a fixed data-plane IPv4.",
+                snakeio::data_plane_ext_port);
+        }
+    }
     return snakeio::open_port("doca-sendto", {
         .sin6_family = AF_INET6,
         .sin6_port = htons(snakeio::data_plane_ext_port),

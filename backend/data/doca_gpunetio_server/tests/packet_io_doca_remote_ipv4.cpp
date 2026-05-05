@@ -277,10 +277,9 @@ BOOST_AUTO_TEST_CASE(packet_io_e2e_gpunetio_remote_ipv4)
     // Remote recv tail after SENT; keep generous for slow SSH / scheduling (GPU RX also retries in tick).
     constexpr int k_remote_recv_tail_ms = 8000;
 
-    const int data_sock = snakeio::game::open_data_port();
-    BOOST_REQUIRE_GE(data_sock, 0);
-
     snakeio::game game;
+    const int data_sock = game.open_data_port();
+    BOOST_REQUIRE_GE(data_sock, 0);
     const snakeio::key_t key = test_key();
     const auto sid = game.add_session(1, 0, 1, std::span(&key, 1));
     BOOST_REQUIRE(sid.has_value());
