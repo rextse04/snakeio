@@ -1,44 +1,44 @@
 #pragma once
-
-#include <doca_error.h>
 #include <config.hpp>
-#include <gpu_server/game_kernels.cuh>
+#include <network.hpp>
+#include <packet.hpp>
 #include <array>
+#include <cstddef>
+#include <memory>
 #include <span>
-#include <stop_token>
-#include <sys/types.h>
 
-struct sockaddr_storage;
+#include "doca_gpunetio_net.hpp"
 
-namespace snakeio::doca_gpunetio_runtime {
-    doca_error_t init() noexcept;
-    void shutdown() noexcept;
-
-    bool started() noexcept;
-
-    // Launches the GPUNetIO receive path (DOCA Flow + cyclic Eth RXQ + CUDA recv kernel).
-    doca_error_t start_recv(void* cuda_stream) noexcept;
-    void stop_recv(void* cuda_stream) noexcept;
-
-    // Blocks until a UDP payload is available (UDP datagram bytes without L2/L3/L4 headers).
-    // Returns false on stop/shutdown/empty wakeups.
-    bool pop_udp_payload(std::stop_token stop_token,
-        std::span<std::byte> out_payload,
-        snakeio::size_t& out_payload_len,
-        sockaddr_storage& out_src_addr,
-        std::array<std::byte, 6>& out_src_eth) noexcept;
-
-    // Sends one IPv4 or IPv6 UDP datagram over the GPUNetIO TX path (headers from host, UDP payload device-to-device
-    // into the TX buffer). If the learned client Ethernet is all-zero, uses SNAKEIO_DOCA_GATEWAY_MAC when set.
-    // Returns bytes sent on success, or -1 if the fast path is unavailable (caller should fall back to sendto).
-    ssize_t send_udp_datagram_gpu(const std::byte* payload_dev,
-        snakeio::size_t payload_len,
-        const sockaddr_storage& dst,
-        const std::byte dst_eth[6]) noexcept;
-
-    // Batched egress: one GPU kernel walks device `send_descs` and submits GPUNetIO TX on `game_cuda_stream`.
-    // Call after `tick_active_sessions_gpu(..., tick_host_finalize::sessions_only)` on the same stream.
-    bool emit_tick_egress_on_stream(void* game_cuda_stream,
-        const gpu::device_state& state,
-        const std::byte* client_eth_dev) noexcept;
+namespace snakeio::gpu {
+    struct device_state;
 }
+
+namespace snakeio::doca_gpunetio {
+
+struct ingress_packet {
+    std::array<std::byte, in_packet_max_text_size + data_packet::header_size> bytes{};
+    size_t size{};
+    sockaddr_storage source_addr{};
+};
+
+class runtime {
+public:
+    runtime() = default;
+
+    void try_init_doca(snakeio::gpu::device_state& gs) noexcept;
+
+    bool doca_active() const noexcept {
+        return doca_ != nullptr && doca_ready_;
+    }
+
+    size_t poll_ingress_batch(snakeio::gpu::device_state& gs, int sock, std::span<ingress_packet> out) noexcept;
+    size_t emit_egress_batch(snakeio::gpu::device_state& gs, int sock) noexcept;
+
+private:
+    size_t poll_socket_batch(int sock, std::span<ingress_packet> out) noexcept;
+
+    std::unique_ptr<DocaGpuIngress> doca_;
+    bool doca_ready_{false};
+};
+
+} // namespace snakeio::doca_gpunetio

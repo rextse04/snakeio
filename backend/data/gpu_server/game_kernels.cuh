@@ -153,6 +153,7 @@ namespace snakeio::gpu {
         const std::byte* keys_bytes) noexcept;
 
     void ingest_packet_gpu(device_state& state, const std::byte* packet, size_t bytes_size) noexcept;
+    void ingest_packet_gpu_from_device(device_state& state, const std::byte* d_packet, size_t bytes_size) noexcept;
 
     void init_client_addrs_gpu(device_state& state, size_t bytes_size) noexcept;
     void destroy_client_addrs_gpu(device_state& state) noexcept;

@@ -1074,6 +1074,20 @@ void snakeio::gpu::ingest_packet_gpu(device_state& s, const std::byte* packet, s
     cudaStreamSynchronize(gpu_stream_of(s));
 }
 
+void snakeio::gpu::ingest_packet_gpu_from_device(device_state& s, const std::byte* d_packet, size_t bytes_size) noexcept {
+    if (bytes_size > s.ingress_packet_capacity) {
+        s.host_ingress->ok = false;
+        return;
+    }
+    cudaMemcpyAsync(s.ingress_packet, d_packet, bytes_size, cudaMemcpyDeviceToDevice, gpu_stream_of(s));
+    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice, gpu_stream_of(s));
+    k_ingest<<<1, 1, 0, gpu_stream_of(s)>>>(s);
+    cudaMemcpyAsync(&s.host_ingress->ok, s.ingress_ok, sizeof(bool), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaMemcpyAsync(&s.host_ingress->session_id, s.ingress_session_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaMemcpyAsync(&s.host_ingress->player_id, s.ingress_player_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaStreamSynchronize(gpu_stream_of(s));
+}
+
 void snakeio::gpu::init_client_addrs_gpu(device_state& s, size_t bytes_size) noexcept {
     cudaMalloc(&s.client_addrs, bytes_size);
     cudaMemset(s.client_addrs, 0, bytes_size);

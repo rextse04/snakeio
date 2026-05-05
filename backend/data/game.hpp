@@ -29,7 +29,7 @@ namespace snakeio {
         void add_session(id_t session_id,
             id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept;
 #ifdef SNAKEIO_BENCHMARK
-        std::ofstream tick_bench_ofs_{"tick_bench_ofs.csv"};
+        std::ofstream tick_bench_ofs_{"tick_bench.csv"};
 #endif
     public:
 #ifdef SNAKEIO_BENCHMARK

@@ -1,47 +1,47 @@
-#include "transport_doca.hpp"
+#include "doca_gpunetio_runtime.hpp"
 #include <game.hpp>
+#include <network.hpp>
 #include <logger.hpp>
-#include <packet.hpp>
-#include <array>
+#include <gpu_server/game_kernels.cuh>
 #include <cuda_runtime.h>
+#include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <new>
-#include <span>
-#include <mutex>
+#include <thread>
+#include <unistd.h>
+#include <vector>
 
 using namespace snakeio;
 
 namespace {
     constexpr snakeio::size_t clients_size = game_max_sessions * game_max_players;
+    constexpr snakeio::size_t ingress_batch_capacity = 2048;
 }
 
 struct game::impl {
     gpu::device_state gpu_state;
-    std::byte* client_eth_macs = nullptr;
-    // game_loop, data_port, and control_port threads all use gpu_state.stream; serialize CUDA API use.
-    std::mutex gpu_stream_mutex;
+    doca_gpunetio::runtime runtime;
+    std::vector<doca_gpunetio::ingress_packet> ingress_batch{ingress_batch_capacity};
+    size_t ingress_total{};
+    size_t ingress_accepted_total{};
+    unsigned log_tick_counter{};
 };
 
 game::game() :
     memory_(new(static_cast<std::align_val_t>(alignof(impl))) std::byte[sizeof(impl)]) {
     new(memory_.get()) impl;
     auto& impl_ = get_impl();
-    gpu::init_device_state(impl_.gpu_state);
-    gpu::init_client_addrs_gpu(impl_.gpu_state, sizeof(sockaddr_storage) * clients_size);
-    void* eth_table = nullptr;
-    if (cudaMalloc(&eth_table, 6UZ * clients_size) == cudaSuccess) {
-        impl_.client_eth_macs = static_cast<std::byte*>(eth_table);
-        cudaMemset(impl_.client_eth_macs, 0, 6UZ * clients_size);
+    if (cudaSetDevice(0) != cudaSuccess) {
+        logger::error("cudaSetDevice(0) failed.");
     }
+    gpu::init_device_state(impl_.gpu_state);
+    impl_.runtime.try_init_doca(impl_.gpu_state);
+    gpu::init_client_addrs_gpu(impl_.gpu_state, sizeof(sockaddr_storage) * clients_size);
 }
 
 game::~game() noexcept {
     impl& impl_ = get_impl();
-    if (impl_.client_eth_macs != nullptr) {
-        cudaFree(impl_.client_eth_macs);
-        impl_.client_eth_macs = nullptr;
-    }
-    doca_transport::shutdown_ingress_path();
     gpu::destroy_client_addrs_gpu(impl_.gpu_state);
     gpu::destroy_device_state(impl_.gpu_state);
     impl_.~impl();
@@ -50,66 +50,90 @@ game::~game() noexcept {
 void game::add_session(id_t session_id,
     id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept {
     impl& impl_ = get_impl();
-    {
-        const std::lock_guard<std::mutex> lock(impl_.gpu_stream_mutex);
-        if (impl_.gpu_state.cuda_device_id >= 0) {
-            cudaSetDevice(impl_.gpu_state.cuda_device_id);
-        }
-        gpu::add_session_gpu(impl_.gpu_state, session_id, human_players, ai_players, max_tick,
-            reinterpret_cast<const std::byte*>(keys.data()));
-    }
+    gpu::add_session_gpu(impl_.gpu_state, session_id, human_players, ai_players, max_tick,
+        reinterpret_cast<const std::byte*>(keys.data()));
     sm_.activate(session_id);
 }
 
 int game::open_data_port() noexcept {
-    return 0;
+    // GPUNetIO ingress uses the GPU RXQ; no Linux UDP bind is required. Return a stable handle
+    // for APIs that expect a non-negative fd (ignored by `tick` when DOCA RX is active).
+    static int placeholder = -1;
+    if (placeholder < 0) {
+        placeholder = ::open("/dev/null", O_RDWR);
+        if (placeholder < 0) {
+            logger::error("open_data_port: /dev/null: {}.", std::strerror(errno));
+            return -1;
+        }
+    }
+    return placeholder;
 }
 
-void game::port(std::stop_token stop_token, [[maybe_unused]] int sock) noexcept {
-    impl& impl_ = get_impl();
-    std::array<std::byte, in_packet_max_text_size + data_packet::header_size> buffer{};
-    std::array<std::byte, 6> client_src_eth{};
-    sockaddr_storage client_addr{};
-    size_t payload_len = 0;
-    while (true) {
-        const std::span<std::byte> buffer_view(buffer);
-        if (!doca_transport::recv_next_udp_payload(stop_token, buffer_view, payload_len, client_addr, client_src_eth)) [[unlikely]] {
-            if (stop_token.stop_requested()) {
-                logger::info("DOCA GPUNetIO data port received stop request, exiting.");
-            }
-            std::exit(EXIT_SUCCESS);
-        }
-
-        {
-            const std::lock_guard lock(impl_.gpu_stream_mutex);
-            if (impl_.gpu_state.cuda_device_id >= 0) {
-                cudaSetDevice(impl_.gpu_state.cuda_device_id);
-            }
-            gpu::ingest_packet_gpu(impl_.gpu_state, buffer.data(), payload_len);
-            if (impl_.gpu_state.host_ingress->ok) {
-                const id_t session_id = impl_.gpu_state.host_ingress->session_id;
-                const id_t player_id = impl_.gpu_state.host_ingress->player_id;
-                doca_transport::store_client_addr(impl_.gpu_state, session_id, player_id, client_addr);
-                if (impl_.client_eth_macs != nullptr) {
-                    doca_transport::store_client_eth(impl_.client_eth_macs, session_id, player_id, client_src_eth);
-                }
-            }
-        }
+void game::port(std::stop_token stop_token, int) noexcept {
+    while (!stop_token.stop_requested()) {
+        std::this_thread::sleep_for(2ms);
     }
 }
 
-void game::tick(std::stop_token, [[maybe_unused]] int sock) noexcept {
+void game::tick(std::stop_token, int sock) noexcept {
     impl& impl_ = get_impl();
-    {
-        const std::lock_guard lock(impl_.gpu_stream_mutex);
-        if (impl_.gpu_state.cuda_device_id >= 0) {
-            cudaSetDevice(impl_.gpu_state.cuda_device_id);
+
+    size_t accepted_now = 0;
+    size_t last_tick_rx = 0;
+    if (impl_.runtime.doca_active()) {
+        // `sock` is the placeholder from `open_data_port`; ingress is GPU-only.
+        accepted_now = impl_.runtime.poll_ingress_batch(impl_.gpu_state, sock, impl_.ingress_batch);
+        last_tick_rx = accepted_now;
+        impl_.ingress_total += accepted_now;
+        impl_.ingress_accepted_total += accepted_now;
+    } else {
+        const size_t ingress_count = impl_.runtime.poll_ingress_batch(impl_.gpu_state, sock, impl_.ingress_batch);
+        last_tick_rx = ingress_count;
+        impl_.ingress_total += ingress_count;
+        for (size_t i = 0; i < ingress_count; ++i) {
+            const auto& pkt = impl_.ingress_batch[i];
+            gpu::ingest_packet_gpu(impl_.gpu_state, pkt.bytes.data(), pkt.size);
+            if (!impl_.gpu_state.host_ingress->ok) {
+                continue;
+            }
+            ++accepted_now;
+            const id_t session_id = impl_.gpu_state.host_ingress->session_id;
+            const id_t player_id = impl_.gpu_state.host_ingress->player_id;
+            cudaMemcpyAsync(impl_.gpu_state.client_addrs + gpu::client_index(session_id, player_id) * sizeof(sockaddr_storage),
+                &pkt.source_addr,
+                sizeof(sockaddr_storage),
+                cudaMemcpyHostToDevice,
+                reinterpret_cast<cudaStream_t>(impl_.gpu_state.stream));
         }
+        impl_.ingress_accepted_total += accepted_now;
+        cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(impl_.gpu_state.stream));
+    }
+    if (++impl_.log_tick_counter >= 50) { // ~1 second at 20ms tick
+        logger::debug("ingress batch stats: total rx={}, accepted={} (last tick rx={}, accepted={}).",
+            impl_.ingress_total, impl_.ingress_accepted_total, last_tick_rx, accepted_now);
+        impl_.log_tick_counter = 0;
+    }
+
+    if (impl_.runtime.doca_active()) {
         gpu::tick_active_sessions_gpu(impl_.gpu_state, gpu::tick_host_finalize::sessions_only);
-        if (session_manager().in_use_size() != 0) {
-            doca_transport::emit_tick_egress_batch(impl_.gpu_state.stream,
-                impl_.gpu_state,
-                impl_.client_eth_macs);
+        // `sendto` uses the kernel egress socket inside `DocaGpuIngress`, not `sock`.
+        impl_.runtime.emit_egress_batch(impl_.gpu_state, sock);
+    } else {
+        gpu::tick_active_sessions_gpu(impl_.gpu_state);
+        const unsigned send_count = *impl_.gpu_state.host_send_descs_size;
+        for (unsigned j = 0; j < send_count; ++j) {
+            const gpu::send_desc& desc = impl_.gpu_state.host_send_descs[j];
+            cudaMemcpy(impl_.gpu_state.host_packet_copy,
+                impl_.gpu_state.packet_ring + desc.ring_offset,
+                desc.bytes_size,
+                cudaMemcpyDeviceToHost);
+            const std::span bytes(impl_.gpu_state.host_packet_copy, desc.bytes_size);
+            sockaddr_storage addr{};
+            cudaMemcpy(&addr,
+                impl_.gpu_state.client_addrs + gpu::client_index(desc.session_id, desc.player_id) * sizeof(sockaddr_storage),
+                sizeof(sockaddr_storage),
+                cudaMemcpyDeviceToHost);
+            sendto(sock, bytes, addr);
         }
     }
 

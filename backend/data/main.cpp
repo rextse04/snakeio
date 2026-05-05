@@ -112,7 +112,7 @@ namespace {
 #ifdef SNAKEIO_BENCHMARK
                 benchmarker bencher(game_.tick_bench, game_.session_manager().in_use_size());
 #endif
-                game.tick(std::move(stop_token), sock);
+                game.tick(stop_token, sock);
             }
             next_tick += game_tick_rate;
             std::this_thread::sleep_until(next_tick);
@@ -124,10 +124,14 @@ int main() {
     const int control_sock = open_port("control", {
         .sin6_family = AF_INET6,
         .sin6_port = htons(data_plane_int_port),
+#ifdef SNAKEIO_BENCHMARK
+        .sin6_addr = in6addr_any
+#else
         .sin6_addr = in6addr_loopback
+#endif
     });
     const int data_sock = game::open_data_port();
-    if (control_sock < 0 || data_sock < 0) {
+    if (control_sock < 0 || data_sock < 0) [[unlikely]] {
         return EXIT_FAILURE;
     }
     constexpr timeval data_read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
