@@ -4,7 +4,6 @@
 #include <packet.hpp>
 #include <logger.hpp>
 #include <cstring>
-#include <cerrno>
 #include <new>
 #include <cuda_runtime.h>
 
@@ -16,6 +15,11 @@ namespace {
 
 
 struct game::impl {
+    udp_port data_port{"data", {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(data_plane_ext_port),
+        .sin6_addr = in6addr_any
+    }};
     gpu::device_state gpu_state;
 };
 
@@ -42,24 +46,16 @@ void game::add_session(id_t session_id,
     sm_.activate(session_id);
 }
 
-void game::port(std::stop_token stop_token, int sock) noexcept {
+void game::port(std::stop_token stop_token) noexcept {
     impl& impl_ = get_impl();
     std::byte buffer[in_packet_max_text_size + data_packet::header_size];
-    sockaddr_storage client_addr{};
     while (true) {
         if (stop_token.stop_requested()) [[unlikely]] {
-            logger::info("Data port received stop request, exiting.");
+            impl_.data_port.log(logger::info, "Received stop request, exiting.");
             return;
         }
-        socklen_t client_addr_len = sizeof(client_addr);
-        const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
-            reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
-        if (recv_len < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) [[unlikely]] {
-                logger::warn("recvfrom failed on data port: {}.", std::strerror(errno));
-            }
-            continue;
-        }
+        const auto [client_addr, recv_len] = impl_.data_port.recv(buffer);
+        if (recv_len == -1) continue;
         gpu::ingest_packet_gpu(impl_.gpu_state, buffer, static_cast<size_t>(recv_len));
         if (impl_.gpu_state.host_ingress->ok) {
             const id_t session_id = impl_.gpu_state.host_ingress->session_id;
@@ -72,7 +68,7 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
     }
 }
 
-void game::tick(std::stop_token, int sock) noexcept {
+void game::tick(std::stop_token) noexcept {
     impl& impl_ = get_impl();
     gpu::tick_active_sessions_gpu(impl_.gpu_state);
 
@@ -89,7 +85,7 @@ void game::tick(std::stop_token, int sock) noexcept {
             impl_.gpu_state.client_addrs + gpu::client_index(desc.session_id, desc.player_id) * sizeof(sockaddr_storage),
             sizeof(sockaddr_storage),
             cudaMemcpyDeviceToHost);
-        sendto(sock, bytes, addr);
+        impl_.data_port.send(addr, bytes);
     }
 
     for (id_t i = 0; i < game_max_sessions; ++i) {

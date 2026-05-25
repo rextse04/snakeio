@@ -1,8 +1,8 @@
 add_library(cpu_server_tick_core_lib STATIC tick_core.cpp session.cpp)
 add_library(cpu_server_lib STATIC game.cpp session.cpp parse.cpp)
 target_link_libraries(cpu_server_lib
-        PRIVATE cpu_open_data_port_lib
         PRIVATE cpu_server_tick_core_lib
+        PRIVATE network_lib
         PRIVATE crypt_lib)
 
 add_library(cpu_server_spatial_set_independent_test_lib STATIC

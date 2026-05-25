@@ -1,6 +1,7 @@
 #pragma once
 #include <config.hpp>
 #include <vector.hpp>
+#include <network.hpp>
 #include <token_manager.hpp>
 #include <cpp_utils/type.hpp>
 #include <array>
@@ -25,12 +26,22 @@ namespace snakeio {
     private:
         token_manager<game_max_sessions> sm_;
         std::unique_ptr<std::byte[]> memory_;
+        udp_port control_port_{"control", {
+            .sin6_family = AF_INET6,
+            .sin6_port = htons(data_plane_int_port),
+#ifdef SNAKEIO_BENCHMARK
+            .sin6_addr = in6addr_any
+#else
+            .sin6_addr = in6addr_loopback
+#endif
+        }};
         // It is guaranteed that all parameters have valid values.
         void add_session(id_t session_id,
             id_t human_players, id_t ai_players, tick_t max_tick, std::span<const key_t> keys) noexcept;
 #ifdef SNAKEIO_BENCHMARK
         std::ofstream tick_bench_ofs_{"tick_bench.csv"};
 #endif
+        friend void control_port(game& game, std::stop_source stop_source);
     public:
 #ifdef SNAKEIO_BENCHMARK
         benchmark<tick_benchmark_item> tick_bench{tick_bench_ofs_};
@@ -61,9 +72,8 @@ namespace snakeio {
             add_session(*session_id, human_players, ai_players, max_tick, keys);
             return *session_id;
         }
-        int open_data_port() noexcept;
-        void port(std::stop_token stop_token, int sock) noexcept;
-        void tick(std::stop_token stop_token, int sock) noexcept;
+        void port(std::stop_token stop_token) noexcept;
+        void tick(std::stop_token stop_token) noexcept;
         template <typename Self>
         constexpr utils::follow_t<Self, impl&> get_impl(this Self&& self) noexcept {
             return *reinterpret_cast<impl*>(self.memory_.get());

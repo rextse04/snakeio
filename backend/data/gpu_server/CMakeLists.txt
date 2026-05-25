@@ -3,9 +3,9 @@ target_link_libraries(gpu_server_logic_lib PRIVATE crypt_gpu_lib)
 
 add_library(gpu_server_lib STATIC game.cpp)
 target_link_libraries(gpu_server_lib
-        PRIVATE cpu_open_data_port_lib
         PRIVATE CUDA::cudart
-        PRIVATE gpu_server_logic_lib)
+        PRIVATE gpu_server_logic_lib
+        PRIVATE network_lib)
 
 add_library(gpu_server_spatial_set_test_lib STATIC tests/spatial_set.cu)
 register_test(spatial_set)

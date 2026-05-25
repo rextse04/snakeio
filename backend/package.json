@@ -5,20 +5,20 @@
     "dev:control": "npm --prefix control run dev",
     "build:control": "npm --prefix control run build",
     "start:control": "npm --prefix control run start",
-
     "build:data:debug": "cmake --build data/cmake-build-debug --target cpu_server_o",
     "build:data:release": "cmake --build data/cmake-build-release --target cpu_server_o",
     "start:data:debug": "data/cmake-build-debug/cpu_server_o",
     "start:data:release": "data/cmake-build-release/cpu_server_o",
-
     "run:data:debug": "npm-run-all build:data:debug start:data:debug",
     "run:data:release": "npm-run-all build:data:release start:data:release",
-
     "dev": "npm-run-all --parallel dev:control run:data:debug",
     "build": "npm-run-all --parallel build:control build:data:release",
     "start": "npm-run-all --parallel start:control start:data:release"
   },
   "devDependencies": {
     "npm-run-all": "^4.1.5"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
   }
 }

@@ -1,15 +1,21 @@
 #pragma once
-#include <cstring>
+#include <config.hpp>
 #include <logger.hpp>
 #include <span>
-#include <cstring>
 #include <format>
+#include <string>
+#include <stdexcept>
 
-#if __has_include(<sys/socket.h>) && __has_include(<netinet/in.h>) && __has_include(<netdb.h>)
+#if __has_include(<sys/socket.h>) &&\
+    __has_include(<netinet/in.h>) &&\
+    __has_include(<arpa/inet.h>) &&\
+    __has_include(<netdb.h>) &&\
+    __has_include(<unistd.h>)
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <netdb.h>
+    #include <unistd.h>
 #elif defined(_WIN16) || defined(_WIN32)
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -39,32 +45,42 @@ struct std::formatter<sockaddr_storage, char> {
 };
 
 namespace snakeio {
-    [[nodiscard]] inline int open_port(std::string_view name, const sockaddr_in6& addr) {
-        const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            logger::error("Failed to create {} socket.", name);
-            return sock;
-        }
-        constexpr int off = 0;
-        if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) < 0) {
-            logger::warn("Failed to clear IPV6_V6ONLY of {} port.", name);
-        }
-        if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-            logger::error("Failed to bind {} socket: {}.", name, std::strerror(errno));
-            return -1;
-        }
-        sockaddr_storage addr_storage{};
-        std::memcpy(&addr_storage, &addr, sizeof(addr));
-        logger::info("{} port listening on {}.", name, addr_storage);
-        return sock;
-    }
+    class network_error : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
 
-    inline ssize_t sendto(int sock, std::span<std::byte> buffer, const sockaddr_storage& addr) {
-        const ssize_t res = sendto(sock, buffer.data(), buffer.size(), 0,
-            reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_storage));
-        if (res == -1) [[unlikely]] {
-            logger::warn("sendto failed: {}.", std::strerror(errno));
+    class udp_port {
+    private:
+        std::string name_;
+        int sock_;
+    public:
+        explicit constexpr udp_port(std::string name) : name_(std::move(name)), sock_(0) {}
+        udp_port(std::string name, const sockaddr_in6& addr);
+        // not moved to .cpp to allow using the class without linking against it
+        ~udp_port() noexcept { close(sock_); }
+
+        constexpr const std::string& name() const noexcept { return name_; }
+        constexpr int sock() const noexcept { return sock_; }
+
+        template <typename... Args>
+        std::string log_str(std::format_string<Args...> fmt, Args&&... args) const {
+            return std::format("({}) {}", name_, std::format(fmt, std::forward<Args>(args)...));
         }
-        return res;
-    }
+        template <typename... Args>
+        void log(const logger::logger& logger, std::format_string<Args...> fmt, Args&&... args) const {
+            logger(log_str(fmt, std::forward<Args>(args)...));
+        }
+        template <typename... Args>
+        void raise(std::format_string<Args...> fmt, Args&&... args) const {
+            throw network_error(log_str(fmt, std::forward<Args>(args)...));
+        }
+
+        struct recv_result {
+            sockaddr_storage client_addr;
+            ssize_t len;
+        };
+        [[nodiscard]] recv_result recv(std::span<std::byte> buffer) const;
+        void send(const sockaddr_storage& addr, std::span<std::byte> buffer) const;
+    };
 }

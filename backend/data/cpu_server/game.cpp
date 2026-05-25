@@ -71,38 +71,31 @@ void game::add_session(id_t session_id,
     sm_.activate(session_id);
 }
 
-void game::port(std::stop_token stop_token, int sock) noexcept {
+void game::port(std::stop_token stop_token) noexcept {
     impl& impl_ = get_impl();
     std::byte buffer[in_packet_max_text_size + data_packet::header_size];
-    sockaddr_storage client_addr{};
     while (true) {
         if (stop_token.stop_requested()) [[unlikely]] {
-            logger::info("Data port received stop request, exiting.");
+            impl_.data_port.log(logger::info, "Received stop request, exiting.");
             return;
         }
-        socklen_t client_addr_len = sizeof(client_addr);
-        const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
-            reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
-        if (recv_len < 0) {
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) [[unlikely]] {
-                logger::warn("recvfrom failed on data port: {}.", std::strerror(errno));
-            }
-            continue;
-        }
+        const auto [client_addr, recv_len] = impl_.data_port.recv(buffer);
+        if (recv_len == -1) continue;
         data_packet packet(buffer, recv_len);
         if (recv_len <= data_packet::header_size) [[unlikely]] {
-            logger::debug("Received packet that is too short from {}.", client_addr);
+            impl_.data_port.log(logger::debug, "Received packet that is too short from {}.", client_addr);
             logger::print_packet(logger::debug, packet.bytes());
             continue;
         }
         if (!sm_[packet.session_id()]) [[unlikely]] {
-            logger::debug("Received packet for non-existent session {} from {}.", packet.session_id(), client_addr);
+            impl_.data_port.log(logger::debug, "Received packet for non-existent session {} from {}.",
+                packet.session_id(), client_addr);
             logger::print_packet(logger::debug, packet.bytes());
             continue;
         }
         session& session = impl_.sessions[packet.session_id()];
         if (packet.player_id() >= session.players) [[unlikely]] {
-            logger::debug("Received packet with invalid player ID {} for session {} from {}.",
+            impl_.data_port.log(logger::debug, "Received packet with invalid player ID {} for session {} from {}.",
                 packet.player_id(), packet.session_id(), client_addr);
             logger::print_packet(logger::debug, packet.bytes());
             continue;
@@ -116,12 +109,12 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
             case ok: break;
             case too_short: std::unreachable();
             case invalid_size: {
-                logger::debug("Received packet with invalid size from {}.", client_addr);
+                impl_.data_port.log(logger::debug, "Received packet with invalid size from {}.", client_addr);
                 logger::print_packet(logger::debug, packet.bytes());
                 continue;
             }
             case invalid_tag: {
-                logger::debug("Received packet with invalid tag for session {} player {} from {}.",
+                impl_.data_port.log(logger::debug, "Received packet with invalid tag for session {} player {} from {}.",
                     packet.session_id(), packet.player_id(), client_addr);
                 logger::print_packet(logger::debug, packet.bytes());
                 continue;
@@ -139,7 +132,7 @@ void game::port(std::stop_token stop_token, int sock) noexcept {
     }
 }
 
-void game::tick(std::stop_token, int sock) noexcept {
+void game::tick(std::stop_token) noexcept {
     impl& impl_ = get_impl();
     for (id_t i = 0; i < game_max_sessions; ++i) {
         if (!sm_[i]) continue;
@@ -172,7 +165,7 @@ void game::tick(std::stop_token, int sock) noexcept {
                 data_packet chunk_packet(buffer, chunk.size() + data_packet::header_size);
                 std::ranges::copy(chunk, chunk_packet.text().begin());
                 chunk_packet.encrypt(client.key);
-                sendto(sock, chunk_packet.bytes(), in_packets[player_id].addr);
+                impl_.data_port.send(in_packets[player_id].addr, chunk_packet.bytes());
                 packet.chunk_id(packet.chunk_id() + 1);
             }
         };

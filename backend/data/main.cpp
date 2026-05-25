@@ -15,28 +15,21 @@
 
 using namespace snakeio;
 
-namespace {
-    void control_port(game& game, std::stop_source stop_source, int sock) {
+namespace snakeio {
+     void control_port(game& game, std::stop_source stop_source) {
         constexpr std::size_t ctl_new_session_pkt = 1 + 5 + 1 + 1 + 4 + game_max_players * sizeof(snakeio::key_t);
         std::byte buffer[ctl_new_session_pkt]{};
-        sockaddr_storage client_addr{};
         while (true) {
-            socklen_t client_addr_len = sizeof(client_addr);
-            const ssize_t recv_len = recvfrom(sock, buffer, sizeof(buffer), 0,
-                reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
-            if (recv_len < 1) {
-                if (recv_len == 0) [[unlikely]] {
-                    logger::warn("Received empty packet on control port from {}.", client_addr);
-                } else if (errno != EINTR) {
-                    logger::warn("recvfrom failed on control port: {}.", std::strerror(errno));
-                }
+            const auto [client_addr, recv_len] = game.control_port_.recv(buffer);
+            if (recv_len == -1) continue;
+            if (recv_len == 0) {
+                game.control_port_.log(logger::warn, "Received empty packet from {}.", client_addr);
                 continue;
             }
-            logger::print_packet(logger::debug, std::span(buffer, recv_len));
             switch (static_cast<unsigned char>(buffer[0])) {
                 case 0: { // kill
-                    logger::info("Received kill command on control port.");
-                    std::ignore = stop_source.request_stop();
+                    game.control_port_.log(logger::info, "Received kill command.");
+                    (void) stop_source.request_stop();
                     return;
                 }
                 case 1: { // new session token
@@ -58,7 +51,8 @@ namespace {
                     const auto keys = std::launder(reinterpret_cast<const snakeio::key_t*>(buffer + header_size));
                     const auto id = game.add_session(human_players, ai_players, max_tick, std::span(keys, human_players));
                     if (id.has_value()) {
-                        logger::debug("Session token {} mapped to session ID {}.", token, id.value());
+                        game.control_port_.log(logger::debug,
+                            "Session token {} mapped to session ID {}.", token, id.value());
                         buffer[6] = std::byte(0);
                         store_32(std::span<std::byte, 4>(buffer + 8, 4), id.value());
                     } else {
@@ -76,44 +70,46 @@ namespace {
                             case max_tick_too_big: {
                                 error = "max tick too big";
                                 break;
-                            }
+                     		        }
                             case unknown_error: {
                                 error = "unknown error";
                                 break;
                             }
                             default: std::unreachable();
                         }
-                        logger::warn("Failed to create new session: {}.", error);
+                        game.control_port_.log(logger::warn,
+                            "Failed to create new session for token {}: {}.", token, error);
                         buffer[6] = static_cast<std::byte>(id.error());
                     }
-                    sendto(sock, std::span(buffer, header_size + 4), client_addr);
+                    game.control_port_.send(client_addr, std::span(buffer, header_size + 4));
                     break;
                 }
                 default: {
-                    logger::warn("Received unknown command on control port.");
+                    game.control_port_.log(logger::warn, "Received unknown command from {}", client_addr);
                     logger::print_packet(logger::debug, std::span(buffer, recv_len));
                     break;
                 }
             }
             continue;
             invalid_format:
-            logger::warn("Received invalid command format on control port.");
+            game.control_port_.log(logger::warn, "Received invalid command format from {}", client_addr);
             logger::print_packet(logger::debug, std::span(buffer, recv_len));
         }
     }
-
-    void data_port(game& game, std::stop_token stop_token, int sock) {
-        game.port(std::move(stop_token), sock);
+}
+namespace {
+    void data_port(game& game, std::stop_token stop_token) {
+        game.port(std::move(stop_token));
     }
 
-    void game_loop(game& game, std::stop_token stop_token, int sock) noexcept {
+    void game_loop(game& game, std::stop_token stop_token) noexcept {
         auto next_tick = game::clock::now();
         while (!stop_token.stop_requested()) {
             {
 #ifdef SNAKEIO_BENCHMARK
                 benchmarker bencher(game.tick_bench, game.session_manager().in_use_size());
 #endif
-                game.tick(stop_token, sock);
+                game.tick(stop_token);
             }
             next_tick += game_tick_rate;
             std::this_thread::sleep_until(next_tick);
@@ -122,24 +118,9 @@ namespace {
 }
 
 int main() {
-    const int control_sock = open_port("control", {
-        .sin6_family = AF_INET6,
-        .sin6_port = htons(data_plane_int_port),
-#ifdef SNAKEIO_BENCHMARK
-        .sin6_addr = in6addr_any
-#else
-        .sin6_addr = in6addr_loopback
-#endif
-    });
     game game;
-    const int data_sock = game.open_data_port();
-    if (control_sock < 0 || data_sock < 0) [[unlikely]] {
-        return EXIT_FAILURE;
-    }
-    constexpr timeval data_read_timeout{.tv_usec = std::chrono::microseconds(game_tick_rate).count()};
-    setsockopt(data_sock, SOL_SOCKET, SO_RCVTIMEO, &data_read_timeout, sizeof(data_read_timeout));
     std::stop_source stop_source;
-    std::jthread control_thread(control_port, std::ref(game), stop_source, control_sock),
-        data_thread(data_port, std::ref(game), stop_source.get_token(), data_sock),
-        game_thread(game_loop, std::ref(game), stop_source.get_token(), data_sock);
+    std::jthread control_thread(control_port, std::ref(game), stop_source),
+        data_thread(data_port, std::ref(game), stop_source.get_token()),
+        game_thread(game_loop, std::ref(game), stop_source.get_token());
 }

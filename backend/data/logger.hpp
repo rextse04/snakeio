@@ -2,67 +2,45 @@
 #include <iostream>
 #include <print>
 #include <span>
-#include <syncstream>
+#include <string>
 
 namespace snakeio::logger {
     class logger {
+    public:
+#ifdef NDEBUG
+        inline static int level = 1;
+#else
+        inline static int level = 0;
+#endif
     private:
         std::ostream& os_;
         const char* prefix_;
-
+        int level_;
     public:
-        constexpr logger(std::ostream& os, const char* prefix) noexcept :
-            os_(os), prefix_(prefix) {}
+        constexpr logger(std::ostream& os, const char* prefix, int level) noexcept :
+            os_(os), prefix_(prefix), level_(level) {}
+        void operator()(std::string_view msg) const {
+            if (level_ < level) return;
+            // must be one call because the logger is used by multiple threads
+            std::println(os_, "{}{}", prefix_, msg);
+        }
         template <typename... Args>
         void operator()(std::format_string<Args...> fmt, Args&&... args) const {
-            std::osyncstream oss(os_);
-            oss << prefix_;
-            std::println(oss, fmt, std::forward<Args>(args)...);
+            operator()(std::format(fmt, std::forward<Args>(args)...));
         }
     };
 
-#ifndef NDEBUG
-    class debug_logger {
-    private:
-        std::ostream& os_;
-        const char* prefix_;
-        friend void print_packet(const debug_logger&, std::span<const std::byte>);
-    public:
-        constexpr debug_logger(std::ostream& os, const char* prefix) noexcept :
-            os_(os), prefix_(prefix) {}
-        template <typename... Args>
-        void operator()(std::format_string<Args...> fmt, Args&&... args) const {
-            std::osyncstream oss(os_);
-            oss << prefix_;
-            std::println(oss, fmt, std::forward<Args>(args)...);
-        }
-    };
-
-    inline void print_packet(const debug_logger& logger, std::span<const std::byte> packet) {
-        std::osyncstream oss(logger.os_);
-        std::print(oss, "{}{} bytes received:", logger.prefix_, packet.size());
+    inline void print_packet(const logger& logger, std::span<const std::byte> packet) {
+        auto str = std::format("{} bytes received:", packet.size());
         for (std::byte byte : packet) {
-            std::print(oss, " {}", static_cast<unsigned char>(byte));
+            str.append(std::format(" {}", static_cast<unsigned char>(byte)));
         }
-        std::println(oss);
+        logger(str);
     }
 
-    inline constexpr debug_logger debug{std::cout, "[DEBUG] "};
-#else
-    class debug_logger {
-    public:
-        template <typename... Args>
-        constexpr void operator()(std::format_string<Args...>, Args&&...) const noexcept {}
-
-    };
-
-    inline void print_packet(const debug_logger&, std::span<const std::byte>) noexcept {}
-
-    inline constexpr debug_logger debug{};
-#endif
-
     inline constexpr logger
-        info{std::cout, "\033[34m[INFO]\033[0m "},
-        warn{std::cout, "\033[33m[WARN]\033[0m "},
-        error{std::cout, "\033[31m[ERROR]\033[0m "};
+        debug{std::cout, "[DEBUG] ", 0},
+        info{std::cout, "\033[34m[INFO]\033[0m ", 1},
+        warn{std::cout, "\033[33m[WARN]\033[0m ", 2},
+        error{std::cout, "\033[31m[ERROR]\033[0m ", 3};
 }
