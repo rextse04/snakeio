@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <random>
 #include <format>
@@ -295,6 +296,79 @@ namespace {
         *st.ingress_ok = true;
         *st.ingress_session_id = sid;
         *st.ingress_player_id = pid;
+    }
+
+    __global__ void k_ingest_batch_seq(snakeio::gpu::device_state st,
+        const std::byte* packets,
+        const snakeio::size_t* sizes,
+        snakeio::size_t packet_stride,
+        snakeio::size_t count,
+        std::uint8_t* ok_out,
+        snakeio::id_t* session_id_out,
+        snakeio::id_t* player_id_out) {
+        if (threadIdx.x || blockIdx.x) return;
+        for (snakeio::size_t i = 0; i < count; ++i) {
+            ok_out[i] = false;
+            session_id_out[i] = snakeio::id_t{};
+            player_id_out[i] = snakeio::id_t{};
+
+            std::byte* p = const_cast<std::byte*>(packets + i * packet_stride);
+            const snakeio::size_t n = sizes[i];
+            if (n <= kPacketHeaderSize) continue;
+            const snakeio::id_t sid = snakeio::load_32(std::span<const std::byte, 4>(p + 0, 4));
+            const snakeio::id_t pid = snakeio::load_32(std::span<const std::byte, 4>(p + 4, 4));
+            if (sid >= snakeio::game_max_sessions) continue;
+            auto& s = st.sessions[sid];
+            if (!s.active || pid >= s.players) continue;
+            const auto cidx = client_index(sid, pid);
+            auto& c = st.clients[cidx];
+            if (st.client_ticks[cidx] == s.tick) continue;
+            if (!verify_and_decrypt(c.key, p, n)) continue;
+            const std::byte* text = p + kPacketAadSize;
+            st.client_last_snapshot_requested[cidx] = static_cast<bool>(text[0]);
+            st.client_last_boost[cidx] = static_cast<bool>(text[1]);
+            st.client_last_angle[cidx] = std::bit_cast<snakeio::scalar_t>(
+                snakeio::load_32(std::span<const std::byte, 4>(text + 4, 4)));
+            st.client_ticks[cidx] = s.tick;
+            ok_out[i] = true;
+            session_id_out[i] = sid;
+            player_id_out[i] = pid;
+        }
+    }
+
+    struct ingest_batch_scratch {
+        std::byte* packets_dev{};
+        snakeio::size_t* sizes_dev{};
+        std::uint8_t* ok_dev{};
+        snakeio::id_t* session_id_dev{};
+        snakeio::id_t* player_id_dev{};
+        snakeio::size_t capacity{};
+    };
+
+    thread_local ingest_batch_scratch ingest_scratch{};
+
+    void ensure_ingest_batch_capacity(snakeio::size_t need_slots, snakeio::size_t packet_stride) {
+        auto& s = ingest_scratch;
+        if (s.capacity >= need_slots)
+            return;
+        cudaFree(s.packets_dev);
+        cudaFree(s.sizes_dev);
+        cudaFree(s.ok_dev);
+        cudaFree(s.session_id_dev);
+        cudaFree(s.player_id_dev);
+        s.packets_dev = nullptr;
+        s.sizes_dev = nullptr;
+        s.ok_dev = nullptr;
+        s.session_id_dev = nullptr;
+        s.player_id_dev = nullptr;
+        s.capacity = 0;
+
+        cudaMalloc(&s.packets_dev, packet_stride * need_slots);
+        cudaMalloc(&s.sizes_dev, sizeof(snakeio::size_t) * need_slots);
+        cudaMalloc(&s.ok_dev, sizeof(std::uint8_t) * need_slots);
+        cudaMalloc(&s.session_id_dev, sizeof(snakeio::id_t) * need_slots);
+        cudaMalloc(&s.player_id_dev, sizeof(snakeio::id_t) * need_slots);
+        s.capacity = need_slots;
     }
 
 
@@ -1060,18 +1134,57 @@ void snakeio::gpu::add_session_gpu(device_state& s, id_t sid,
     cudaStreamSynchronize(gpu_stream_of(s));
 }
 
-void snakeio::gpu::ingest_packet_gpu(device_state& s, const std::byte* packet, size_t bytes_size) noexcept {
-    if (bytes_size > s.ingress_packet_capacity) {
-        s.host_ingress->ok = false;
+void snakeio::gpu::ingest_packet_gpu_enqueue(device_state& s,
+    const std::byte* packet,
+    size_t bytes_size,
+    bool* ok_out,
+    id_t* session_id_out,
+    id_t* player_id_out) noexcept {
+    if (bytes_size > s.ingress_packet_capacity) [[unlikely]] {
+        *ok_out = false;
+        *session_id_out = id_t{};
+        *player_id_out = id_t{};
         return;
     }
-    cudaMemcpyAsync(s.ingress_packet, packet, bytes_size, cudaMemcpyHostToDevice, gpu_stream_of(s));
-    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice, gpu_stream_of(s));
-    k_ingest<<<1, 1, 0, gpu_stream_of(s)>>>(s);
-    cudaMemcpyAsync(&s.host_ingress->ok, s.ingress_ok, sizeof(bool), cudaMemcpyDeviceToHost, gpu_stream_of(s));
-    cudaMemcpyAsync(&s.host_ingress->session_id, s.ingress_session_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
-    cudaMemcpyAsync(&s.host_ingress->player_id, s.ingress_player_id, sizeof(id_t), cudaMemcpyDeviceToHost, gpu_stream_of(s));
+    cudaStream_t stream = gpu_stream_of(s);
+    cudaMemcpyAsync(s.ingress_packet, packet, bytes_size, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(s.ingress_packet_size, &bytes_size, sizeof(size_t), cudaMemcpyHostToDevice, stream);
+    k_ingest<<<1, 1, 0, stream>>>(s);
+    cudaMemcpyAsync(ok_out, s.ingress_ok, sizeof(bool), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(session_id_out, s.ingress_session_id, sizeof(id_t), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(player_id_out, s.ingress_player_id, sizeof(id_t), cudaMemcpyDeviceToHost, stream);
+}
+
+void snakeio::gpu::ingest_packet_gpu(device_state& s, const std::byte* packet, size_t bytes_size) noexcept {
+    ingest_packet_gpu_enqueue(s, packet, bytes_size, &s.host_ingress->ok, &s.host_ingress->session_id,
+        &s.host_ingress->player_id);
     cudaStreamSynchronize(gpu_stream_of(s));
+}
+
+void snakeio::gpu::ingest_packets_gpu_batch(device_state& s,
+    const std::byte* packets_host,
+    const size_t* sizes_host,
+    size_t packet_stride,
+    size_t count,
+    std::uint8_t* ok_out,
+    id_t* session_id_out,
+    id_t* player_id_out) noexcept {
+    if (count == 0)
+        return;
+    cudaStream_t stream = gpu_stream_of(s);
+    ensure_ingest_batch_capacity(count, packet_stride);
+    auto& scratch = ingest_scratch;
+    cudaMemcpyAsync(scratch.packets_dev, packets_host, packet_stride * count, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(scratch.sizes_dev, sizes_host, sizeof(size_t) * count, cudaMemcpyHostToDevice, stream);
+    k_ingest_batch_seq<<<1, 1, 0, stream>>>(
+        s, scratch.packets_dev, scratch.sizes_dev, packet_stride, count, scratch.ok_dev,
+        scratch.session_id_dev, scratch.player_id_dev);
+    cudaMemcpyAsync(ok_out, scratch.ok_dev, sizeof(std::uint8_t) * count, cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(
+        session_id_out, scratch.session_id_dev, sizeof(id_t) * count, cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(
+        player_id_out, scratch.player_id_dev, sizeof(id_t) * count, cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
 }
 
 void snakeio::gpu::ingest_packet_gpu_from_device(device_state& s, const std::byte* d_packet, size_t bytes_size) noexcept {

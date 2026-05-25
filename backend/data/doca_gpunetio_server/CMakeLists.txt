@@ -34,6 +34,7 @@ target_link_libraries(doca_gpunetio_server_lib
     PRIVATE CUDA::cudart
     PRIVATE gpu_server_logic_lib
     PRIVATE ZLIB::ZLIB
+    PRIVATE network_lib
 )
 
 if (SNAKEIO_DOCA_INCLUDE_DIR)

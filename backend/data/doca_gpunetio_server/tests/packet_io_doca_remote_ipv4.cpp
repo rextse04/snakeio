@@ -278,8 +278,6 @@ BOOST_AUTO_TEST_CASE(packet_io_e2e_gpunetio_remote_ipv4)
     constexpr int k_remote_recv_tail_ms = 8000;
 
     snakeio::game game;
-    const int data_sock = game.open_data_port();
-    BOOST_REQUIRE_GE(data_sock, 0);
     const snakeio::key_t key = test_key();
     const auto sid = game.add_session(1, 0, 1, std::span(&key, 1));
     BOOST_REQUIRE(sid.has_value());
@@ -296,7 +294,7 @@ BOOST_AUTO_TEST_CASE(packet_io_e2e_gpunetio_remote_ipv4)
             {b64},
             [&] {
                 std::stop_token st{};
-                game.tick(st, data_sock);
+                game.tick(st);
             },
             remote_log);
         auto pkts = parse_pkts_from_remote_log(remote_log);
@@ -322,7 +320,7 @@ BOOST_AUTO_TEST_CASE(packet_io_e2e_gpunetio_remote_ipv4)
             {b64},
             [&] {
                 std::stop_token st{};
-                game.tick(st, data_sock);
+                game.tick(st);
             },
             remote_log);
         auto pkts = parse_pkts_from_remote_log(remote_log);
@@ -339,6 +337,4 @@ BOOST_AUTO_TEST_CASE(packet_io_e2e_gpunetio_remote_ipv4)
         BOOST_CHECK(types1.contains(0));
         BOOST_CHECK(types1.contains(3));
     }
-
-    close(data_sock);
 }

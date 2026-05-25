@@ -302,15 +302,21 @@ static doca_error_t create_root_pipe(struct rxq_queue *rxq)
 		.counter_type = DOCA_FLOW_RESOURCE_TYPE_NON_SHARED,
 	};
 
+	/* Steer only data-plane UDP (50003) to GPUNetIO; control (50002) stays on kernel IPv6 socket. */
+	const uint16_t snakeio_data_udp_be = htons(50003);
 	struct doca_flow_match udp6_match = {
 		.outer.eth.type = htons(DOCA_FLOW_ETHER_TYPE_IPV6),
 		.outer.l3_type = DOCA_FLOW_L3_TYPE_IP6,
 		.outer.ip6.next_proto = IPPROTO_UDP,
+		.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP,
+		.outer.udp.l4_port.dst_port = snakeio_data_udp_be,
 	};
 	struct doca_flow_match udp4_match = {
 		.outer.eth.type = htons(DOCA_FLOW_ETHER_TYPE_IPV4),
 		.outer.l3_type = DOCA_FLOW_L3_TYPE_IP4,
 		.outer.ip4.next_proto = IPPROTO_UDP,
+		.outer.l4_type_ext = DOCA_FLOW_L4_TYPE_EXT_UDP,
+		.outer.udp.l4_port.dst_port = snakeio_data_udp_be,
 	};
 
 	struct doca_flow_fwd udp6_fwd = {

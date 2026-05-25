@@ -107,7 +107,7 @@ namespace {
         while (!stop_token.stop_requested()) {
             {
 #ifdef SNAKEIO_BENCHMARK
-                benchmarker bencher(game.tick_bench, game.session_manager().in_use_size());
+                benchmarker bencher(game.tick_bench, game.session_manager().activated_slots());
 #endif
                 game.tick(stop_token);
             }

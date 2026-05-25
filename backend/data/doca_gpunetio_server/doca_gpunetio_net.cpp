@@ -14,6 +14,7 @@
 #include <gpu_server/game_kernels.cuh>
 #include <cstring>
 #include <cstdio>
+#include <cerrno>
 #include <endian.h>
 #include <unistd.h>
 
@@ -99,6 +100,27 @@ doca_error_t doca_mmap_gpu_buffer(struct doca_gpu* gpu,
     return DOCA_SUCCESS;
 }
 
+static int open_udp_socket(const char* name, const sockaddr_in6& addr) noexcept
+{
+    const int sock = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        snakeio::logger::error("{}: socket(AF_INET6, SOCK_DGRAM) failed: {}.", name, std::strerror(errno));
+        return -1;
+    }
+    constexpr int off = 0;
+    if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off)) != 0) {
+        snakeio::logger::warn("{}: failed to clear IPV6_V6ONLY: {}.", name, std::strerror(errno));
+    }
+    if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
+        snakeio::logger::error("{}: bind failed: {}.", name, std::strerror(errno));
+        ::close(sock);
+        return -1;
+    }
+    snakeio::logger::info("({}) Listening on {}.", name,
+        *reinterpret_cast<const sockaddr_storage*>(&addr));
+    return sock;
+}
+
 } // namespace
 
 /// Binds before `snakeio_recv_create_rxq` installs RSS so `sendto` replies use the kernel stack.
@@ -121,7 +143,7 @@ static int open_kernel_udp_for_doca_sendto() noexcept
         sin6.sin6_addr.s6_addr[10] = 0xff;
         sin6.sin6_addr.s6_addr[11] = 0xff;
         std::memcpy(&sin6.sin6_addr.s6_addr[12], &v4.s_addr, sizeof(v4.s_addr));
-        return snakeio::open_port("doca-sendto", sin6);
+        return open_udp_socket("doca-sendto", sin6);
     }
     {
         static bool warned_bind = false;
@@ -133,7 +155,7 @@ static int open_kernel_udp_for_doca_sendto() noexcept
                 snakeio::data_plane_ext_port);
         }
     }
-    return snakeio::open_port("doca-sendto", {
+    return open_udp_socket("doca-sendto", {
         .sin6_family = AF_INET6,
         .sin6_port = htons(snakeio::data_plane_ext_port),
         .sin6_addr = in6addr_any

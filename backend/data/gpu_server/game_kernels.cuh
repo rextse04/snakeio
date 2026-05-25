@@ -153,6 +153,28 @@ namespace snakeio::gpu {
         const std::byte* keys_bytes) noexcept;
 
     void ingest_packet_gpu(device_state& state, const std::byte* packet, size_t bytes_size) noexcept;
+
+    /// Enqueues one ingress on \a state's stream without host synchronization; caller supplies host
+    /// pointers that receive \c k_ingest outputs after \c cudaStreamSynchronize(stream).
+    void ingest_packet_gpu_enqueue(device_state& state,
+        const std::byte* packet,
+        size_t bytes_size,
+        bool* ok_out,
+        id_t* session_id_out,
+        id_t* player_id_out) noexcept;
+
+    /// Batched ingress: `packets_host` stores `count` packet slots of `packet_stride` bytes each;
+    /// `sizes_host[i]` is the valid byte length of slot `i`.
+    /// Writes one `(ok,session_id,player_id)` per slot to host outputs after stream sync.
+    void ingest_packets_gpu_batch(device_state& state,
+        const std::byte* packets_host,
+        const size_t* sizes_host,
+        size_t packet_stride,
+        size_t count,
+        std::uint8_t* ok_out,
+        id_t* session_id_out,
+        id_t* player_id_out) noexcept;
+
     void ingest_packet_gpu_from_device(device_state& state, const std::byte* d_packet, size_t bytes_size) noexcept;
 
     void init_client_addrs_gpu(device_state& state, size_t bytes_size) noexcept;

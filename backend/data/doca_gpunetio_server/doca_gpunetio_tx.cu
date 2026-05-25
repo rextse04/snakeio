@@ -128,7 +128,7 @@ __global__ void k_tx_serial(struct doca_gpu_eth_txq* txq,
             std::uint8_t dst_ip6[16]{};
             std::memcpy(&dst_port_be, sa + 2, sizeof(dst_port_be));
             std::memcpy(dst_ip6, sa + 8, sizeof(dst_ip6));
-            // IPv4-mapped `::ffff:a.b.c.d` (see `poll_ingress_batch`); emit IPv4 Ethernet, not IPv6.
+            // IPv4-mapped `::ffff:a.b.c.d` (DOCA ingress → sockaddr staging); emit IPv4 Ethernet, not IPv6.
             const bool v4mapped = dst_ip6[10] == 0xff && dst_ip6[11] == 0xff;
             if (v4mapped && k_tx.have_src_v4 != 0u) {
                 std::uint32_t dst_ip_be{};

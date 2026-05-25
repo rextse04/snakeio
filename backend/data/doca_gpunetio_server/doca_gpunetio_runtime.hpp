@@ -5,7 +5,9 @@
 #include <array>
 #include <cstddef>
 #include <memory>
-#include <span>
+#include <mutex>
+#include <stop_token>
+#include <utility>
 
 #include "doca_gpunetio_net.hpp"
 
@@ -31,11 +33,20 @@ public:
         return doca_ != nullptr && doca_ready_;
     }
 
-    size_t poll_ingress_batch(snakeio::gpu::device_state& gs, int sock, std::span<ingress_packet> out) noexcept;
-    size_t emit_egress_batch(snakeio::gpu::device_state& gs, int sock) noexcept;
+    /// Port thread only: kernel UDP path — one blocking `recvfrom`, then direct GPU ingest.
+    /// Returns `{rx packets consumed from socket, ingest accepted}` for this call.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> process_kernel_udp_ingress(
+        snakeio::gpu::device_state& gs, int sock, std::stop_token stop_token) noexcept;
+
+    /// Port thread only: sole GPUNetIO RX path — receives staged frames then ingests directly.
+    /// Returns `{rx packets from GPUNetIO stage, ingest accepted}` for this call.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> process_doca_ingress(
+        snakeio::gpu::device_state& gs, std::stop_token stop_token) noexcept;
+
+    std::size_t emit_egress_batch(snakeio::gpu::device_state& gs, int sock) noexcept;
 
 private:
-    size_t poll_socket_batch(int sock, std::span<ingress_packet> out) noexcept;
+    std::mutex doca_mtx_;
 
     std::unique_ptr<DocaGpuIngress> doca_;
     bool doca_ready_{false};

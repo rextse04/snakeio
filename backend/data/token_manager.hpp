@@ -32,6 +32,15 @@ namespace snakeio {
         constexpr id_t in_use_size() const noexcept {
             return IDBound - avail_size();
         }
+        /// Slots with `activate()` set (bitmap). Safe concurrent read with `activate`/`deallocate` on other threads.
+        constexpr id_t activated_slots() const noexcept {
+            id_t n = 0;
+            for (id_t id = 0; id < IDBound; ++id) {
+                if (operator[](id))
+                    ++n;
+            }
+            return n;
+        }
         // Approximation of the available size.
         constexpr id_t avail_size() const noexcept {
             const id_t begin = free_list_begin_.load(std::memory_order::relaxed),

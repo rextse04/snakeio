@@ -24,7 +24,6 @@ constexpr snakeio::id_t kPlayerId = 0;
 
 struct udp_runtime {
     snakeio::game game;
-    int game_sock = -1;
     int client_sock = -1;
     sockaddr_in6 game_addr{};
     std::jthread port_thread;
@@ -46,16 +45,17 @@ struct udp_runtime {
     }
 
     udp_runtime() {
-        game_sock = socket(AF_INET6, SOCK_DGRAM, 0);
         client_sock = socket(AF_INET6, SOCK_DGRAM, 0);
-        BOOST_REQUIRE_NE(game_sock, -1);
         BOOST_REQUIRE_NE(client_sock, -1);
-        set_recv_timeout_ms(game_sock, 50);
         set_recv_timeout_ms(client_sock, 50);
-        game_addr = bind_loopback_udp(game_sock, snakeio::data_plane_ext_port);
         (void) bind_loopback_udp(client_sock);
+        game_addr = sockaddr_in6{
+            .sin6_family = AF_INET6,
+            .sin6_port = htons(snakeio::data_plane_ext_port),
+            .sin6_addr = in6addr_loopback
+        };
         port_thread = std::jthread([this](std::stop_token st) {
-            game.port(st, game_sock);
+            game.port(st);
         });
     }
 
@@ -63,7 +63,6 @@ struct udp_runtime {
         if (port_thread.joinable()) {
             port_thread.request_stop();
         }
-        if (game_sock != -1) close(game_sock);
         if (client_sock != -1) close(client_sock);
     }
 };
@@ -153,7 +152,7 @@ BOOST_AUTO_TEST_CASE(packet_ingress_e2e) {
     const auto ingress = make_ingress_packet(key, *sid, kPlayerId, true, true, 0.75f, 123u);
     send_packet(rt.client_sock, rt.game_addr, ingress);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    rt.game.tick({}, rt.game_sock);
+    rt.game.tick({});
 
     auto packets = recv_packets(rt.client_sock);
     BOOST_REQUIRE(!packets.empty());
@@ -171,7 +170,8 @@ BOOST_AUTO_TEST_CASE(packet_egress_e2e) {
     send_packet(rt.client_sock, rt.game_addr,
         make_ingress_packet(key, *sid, kPlayerId, false, false, std::numeric_limits<float>::quiet_NaN(), 1));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    rt.game.tick({}, rt.game_sock);
+    rt.game.tick({});
+
     auto packets0 = recv_packets(rt.client_sock);
     BOOST_REQUIRE(!packets0.empty());
     auto types0 = decrypt_types(packets0, key, 0, kPlayerId);
@@ -180,7 +180,8 @@ BOOST_AUTO_TEST_CASE(packet_egress_e2e) {
     send_packet(rt.client_sock, rt.game_addr,
         make_ingress_packet(key, *sid, kPlayerId, false, false, std::numeric_limits<float>::quiet_NaN(), 2));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    rt.game.tick({}, rt.game_sock);
+    rt.game.tick({});
+
     auto packets1 = recv_packets(rt.client_sock);
     BOOST_REQUIRE(!packets1.empty());
     auto types1 = decrypt_types(packets1, key, 1, kPlayerId);
@@ -200,7 +201,7 @@ BOOST_AUTO_TEST_CASE(packet_egress_multi_player_branch_e2e) {
     send_packet(rt.client_sock, rt.game_addr,
         make_ingress_packet(keys[1], *sid, 1, false, false, std::numeric_limits<float>::quiet_NaN(), 1));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    rt.game.tick({}, rt.game_sock);
+    rt.game.tick({});
 
     auto packets0 = recv_packets(rt.client_sock);
     BOOST_REQUIRE(!packets0.empty());
@@ -214,7 +215,7 @@ BOOST_AUTO_TEST_CASE(packet_egress_multi_player_branch_e2e) {
     send_packet(rt.client_sock, rt.game_addr,
         make_ingress_packet(keys[1], *sid, 1, true, false, std::numeric_limits<float>::quiet_NaN(), 2));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    rt.game.tick({}, rt.game_sock);
+    rt.game.tick({});
 
     auto packets1 = recv_packets(rt.client_sock);
     BOOST_REQUIRE(!packets1.empty());
